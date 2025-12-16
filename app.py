@@ -4,10 +4,7 @@ import shutil
 
 # استيراد دالة المونتاج من ملفك الأصلي
 # تأكد أن اسم ملفك هو audio.py وأن الدالة بداخله اسمها robust_director
-try:
-    from audio import robust_director
-except ImportError:
-    st.error("⚠️ لم يتم العثور على ملف audio.py! تأكد أنه بجانب هذا الملف.")
+from audio import robust_director
 
 # --- إعدادات الصفحة ---
 st.set_page_config(
