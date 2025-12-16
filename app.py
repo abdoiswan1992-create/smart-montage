@@ -4,7 +4,17 @@ import shutil
 import json
 import random
 import re
-import time
+import subprocess
+import sys
+
+# التأكد من تثبيت مكتبة groq
+try:
+    import groq
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "groq"])
+    import groq
+
+from groq import Groq
 from pydub import AudioSegment
 from pydub.effects import normalize, high_pass_filter
 from pydub.silence import detect_nonsilent
@@ -14,12 +24,12 @@ import yt_dlp
 # ==========================================
 # ⚙️ إعدادات الصفحة
 # ==========================================
-st.set_page_config(page_title="المخرج السينمائي (نسخة التنويع)", page_icon="🎭", layout="centered")
+st.set_page_config(page_title="المخرج السينمائي (Llama 3 AI)", page_icon="🦙", layout="centered")
 
 st.markdown("""
 <div style="text-align: center;">
-    <h1>🎭 المخرج السينمائي (نسخة التنويع الواقعي)</h1>
-    <p>أصوات لا تتكرر + مؤثرات رعب مدروسة</p>
+    <h1>🦙 المخرج السينمائي الذكي (Llama 3)</h1>
+    <p>يفهم سياق الرواية باللهجة المصرية ويختار المؤثرات بدقة</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -31,169 +41,117 @@ if not os.path.exists(SFX_DIR): os.makedirs(SFX_DIR)
 
 AudioSegment.converter = "ffmpeg" if shutil.which("ffmpeg") else "ffmpeg.exe"
 
+# جلب مفتاح GROQ
+api_key = st.secrets.get("GROQ_API_KEY")
+
 # ==========================================
-# 📚 القاموس المتنوع (قوائم بحث متعددة لكل مؤثر)
+# 📚 قاموس المؤثرات (للمرجع فقط)
 # ==========================================
 SCENE_MAP = {
-    "footsteps": {
-        "triggers": ["بيجري", "يجري", "مشى", "يمشي", "خطوات", "بسرعة", "هروب", "يلتفت", "تتدحرج", "زحف"], 
-        # تنويع بين الركض والمشي والزحف
-        "searches": [
-            "running footsteps on dirt horror sound effect",
-            "fast breathing and running footsteps sound effect",
-            "slow heavy footsteps echo horror",
-            "dragging body on floor sound effect"
-        ],
-        "vol": -4
-    },
-    "door_open": {
-        "triggers": ["فتح", "يفتح", "باب", "دخل", "عدى", "صرير"], 
-        "searches": [
-            "slow creaky wooden door open sound effect",
-            "heavy metal door opening horror sound effect",
-            "old dungeon door squeak sound effect"
-        ],
-        "vol": -5
-    },
-    "door_slam": {
-        "triggers": ["أفل", "قفل", "خبط", "رزع", "ارتطم", "تطام", "تحشم", "تهشم", "سد"], 
-        # تنويع طرق إغلاق الباب
-        "searches": [
-            "heavy wooden door slam reverb sound effect",
-            "loud metal door slam prison sound effect",
-            "distant door slam echo horror",
-            "impact thud sound effect cinematic"
-        ],
-        "vol": -2
-    },
-    "breathing": {
-        "triggers": ["بيس", "يلهث", "نفس", "هواء", "اختناق", "اختناء", "صدره", "تعب"], 
-        "searches": [
-            "scared man hyperventilating sound effect",
-            "heavy tired breathing after running sound effect",
-            "choking gasping for air sound effect"
-        ],
-        "vol": -8
-    },
-    "scream": {
-        "triggers": ["صرخ", "صرح", "صيحة", "صوت عالي", "فزع", "يا لهوي", "الحقوني"], 
-        # صرخات واقعية وليست كرتونية
-        "searches": [
-            "short gasp of terror sound effect",
-            "man terrifying scream horror realistic",
-            "muffled scream horror sound effect",
-            "falling scream with echo cinematic"
-        ],
-        "vol": -6 # خفضنا الصوت ليكون أقل إزعاجاً
-    },
-    "rock_crumble": {
-        "triggers": ["انهيار", "صخور", "تراب", "ردم", "زلزال", "تنهار", "السرداب"], 
-        "searches": [
-            "cave ceiling collapse sound effect",
-            "falling rocks and debris sound effect",
-            "earthquake rumble sound effect low frequency"
-        ],
-        "vol": -4
-    },
-    "heartbeat": {
-        "triggers": ["قلبه", "خوف", "رعب", "نبض", "دق"], 
-        "searches": [
-            "slow intense heartbeat horror sound effect",
-            "fast racing heartbeat sound effect"
-        ],
-        "vol": -5
-    },
-     "wind": {
-        "triggers": ["هواء", "تهوية", "نفق", "رياح", "ظلام"], 
-        "searches": [
-            "eerie cave wind howling sound effect",
-            "low dark drone ambience horror"
-        ],
-        "vol": -12
-    }
+    "footsteps": ["running footsteps horror", "slow heavy footsteps", "scared walking sounds"],
+    "door_open": ["creaky door open horror", "metal door slide", "heavy gate opening"],
+    "door_slam": ["loud door slam reverb", "prison door shut", "wooden door impact"],
+    "breathing": ["scared heavy breathing", "panic hyperventilation", "tired gasping"],
+    "scream": ["man terrified scream horror", "falling scream echo", "muffled scream"],
+    "falling": ["body hitting ground thud", "falling clothes rustle", "heavy impact drop"],
+    "rock_crumble": ["cave collapse sound", "rocks falling debris", "earthquake rumble"],
+    "heartbeat": ["intense horror heartbeat", "fast racing pulse sound"],
+    "wind": ["cave wind howling", "eerie dark ambience wind"],
+    "silence": ["shocking silence ringing ear", "suspense low drone"],
+    "glass": ["glass shattering loud", "window break crash"]
 }
 
 # ==========================================
-# 🧠 المخرج "الخوارزمي"
+# 🧠 العقل المدبر (Groq / Llama 3)
 # ==========================================
-def analyze_text_with_regex(transcript_segments):
-    plan = []
-    last_trigger_time = -5
-    
-    for segment in transcript_segments:
-        text = segment['text']
-        start = segment['start']
-        
-        if start - last_trigger_time < 3.0: # زيادة الفاصل الزمني لمنع الازدحام
-            continue
+def analyze_text_with_groq(text_data):
+    if not api_key:
+        st.error("⚠️ يجب إضافة GROQ_API_KEY في الـ Secrets!")
+        return []
 
-        found_sfx = None
+    client = Groq(api_key=api_key)
+    
+    prompt = f"""
+    You are an expert movie sound director. Analyze this story script (Egyptian Arabic):
+    "{text_data}"
+
+    Task: Identify the perfect moments for sound effects based on the **context** and **meaning**, not just keywords.
+    
+    Available Effects: {list(SCENE_MAP.keys())}
+    
+    Rules:
+    1. Only use the listed effects.
+    2. Ignore negations (e.g., "He didn't scream" -> No scream).
+    3. Return ONLY a JSON array. No text before or after.
+    4. Format: [{{"sfx": "category", "time": seconds}}]
+    5. Be precise with timing based on the timestamps in text (e.g., [12.50]).
+    """
+
+    try:
+        completion = client.chat.completions.create(
+            model="llama3-70b-8192", # موديل ذكي جداً وسريع
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1, # لضمان الدقة وعدم التأليف
+            response_format={"type": "json_object"}
+        )
         
-        for sfx_key, data in SCENE_MAP.items():
-            for trigger in data["triggers"]:
-                if trigger in text:
-                    found_sfx = sfx_key
-                    break
-            if found_sfx: break
+        response_text = completion.choices[0].message.content
+        return json.loads(response_text).get("sfx", []) # أو التعامل مع هيكل JSON المباشر
         
-        if found_sfx:
-            plan.append({"sfx": found_sfx, "time": start})
-            last_trigger_time = start
-            
-    return plan
+        # تحسين استخراج JSON في حال اختلاف الهيكل
+        if "sfx" in json.loads(response_text):
+            return json.loads(response_text)["sfx"]
+        elif isinstance(json.loads(response_text), list):
+            return json.loads(response_text)
+        else:
+            # محاولة البحث داخل القيم
+            data = json.loads(response_text)
+            for key in data:
+                if isinstance(data[key], list):
+                    return data[key]
+            return []
+
+    except Exception as e:
+        st.error(f"Groq AI Error: {e}")
+        return []
 
 # ==========================================
-# 📥 التحميل المتنوع (Random Picker)
+# 📥 التحميل المتنوع
 # ==========================================
-def get_diverse_sfx(category):
-    # نختار جملة بحث عشوائية من القائمة لضمان التنوع
-    search_query = random.choice(SCENE_MAP.get(category)["searches"])
+def get_sfx_file(category):
+    # اختيار بحث عشوائي للتنويع
+    search_query = random.choice(SCENE_MAP.get(category, [category + " sound"]))
     
-    # اسم الملف يحتوي على جزء من جملة البحث لكي لا نخلط بين الأنواع
-    safe_search_name = re.sub(r'\W+', '', search_query)[:10]
-    filename_base = f"{category}_{safe_search_name}_{random.randint(100,999)}"
+    filename_base = f"{category}_{random.randint(100,999)}"
     filename_path = os.path.join(SFX_DIR, filename_base)
     
-    # 1. هل لدينا ملف مشابه سابقاً؟ (نحاول استخدامه بنسبة 50% لتوفير الوقت، ونحمل جديد بنسبة 50%)
-    existing_files = [f for f in os.listdir(SFX_DIR) if f.startswith(category)]
-    if existing_files and random.random() > 0.6: # 40% فرصة تحميل صوت جديد تماماً
-        selected = os.path.join(SFX_DIR, random.choice(existing_files))
-        if os.path.getsize(selected) > 5000:
-            return selected
+    # محاولة استخدام ملف موجود
+    existing = [f for f in os.listdir(SFX_DIR) if f.startswith(category)]
+    if existing and random.random() > 0.5:
+        selected = os.path.join(SFX_DIR, random.choice(existing))
+        if os.path.getsize(selected) > 5000: return selected
 
-    # 2. التحميل من يوتيوب (البحث عن الجديد)
-    st.toast(f"🦅 جاري البحث عن صوت جديد: {search_query}...")
-    
-    target_url = f"ytsearch1:{search_query} no copyright sound effect"
-    
+    # تحميل جديد
+    st.toast(f"🦅 Llama طلب: {search_query}...")
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': filename_path,
         'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'}],
         'quiet': True,
         'no_warnings': True,
-        'max_filesize': 10 * 1024 * 1024,
-        'match_filter': yt_dlp.utils.match_filter_func("duration < 30"), # مؤثرات قصيرة فقط
+        'max_filesize': 10*1024*1024,
+        'match_filter': yt_dlp.utils.match_filter_func("duration < 30"),
     }
-    
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([target_url])
-        
-        final_path = filename_path + ".mp3"
-        if os.path.exists(final_path) and os.path.getsize(final_path) > 5000:
-            return final_path
-        
-    except Exception as e:
-        print(f"Error downloading {category}: {e}")
-        # في حالة الفشل، نعود لأي ملف قديم
-        if existing_files:
-             return os.path.join(SFX_DIR, random.choice(existing_files))
-        
-    return None
+            ydl.download([f"ytsearch1:{search_query} sound effect no copyright"])
+        return filename_path + ".mp3"
+    except:
+        if existing: return os.path.join(SFX_DIR, random.choice(existing))
+        return None
 
 # ==========================================
-# ✂️ دوال المعالجة
+# ✂️ المعالجة
 # ==========================================
 def smart_crop_audio(sound, silence_thresh=-40, padding=50):
     try:
@@ -204,105 +162,81 @@ def smart_crop_audio(sound, silence_thresh=-40, padding=50):
             end_i = min(len(sound), end_i + padding)
             return sound[start_i:end_i]
         return sound
-    except:
-        return sound
+    except: return sound
 
-def camouflage_audio(sound):
-    try:
-        speed_change = random.uniform(0.95, 1.05)
-        new_sample_rate = int(sound.frame_rate * speed_change)
-        camouflaged = sound._spawn(sound.raw_data, overrides={'frame_rate': new_sample_rate})
-        return camouflaged.set_frame_rate(44100)
-    except:
-        return sound
-
-# ==========================================
-# 🎬 المعالجة الرئيسية
-# ==========================================
 def process_audio(voice_file):
     # 1. Whisper
-    st.info("🧠 1. جاري تحليل اللهجة المصرية (Medium)...")
+    st.info("🧠 1. جاري استماع وتحليل القصة...")
     try:
         model = WhisperModel("medium", device="cpu", compute_type="int8")
         segments, _ = model.transcribe(voice_file, word_timestamps=True, language="ar")
         
-        detailed_words = []
-        full_text = []
-        
+        full_text_with_time = []
+        clean_text = []
         for segment in segments:
             for word in segment.words:
-                cleaned_word = word.word.strip()
-                cleaned_word = re.sub(r'[\u064B-\u065F]', '', cleaned_word) 
-                detailed_words.append({'text': cleaned_word, 'start': word.start})
-                full_text.append(cleaned_word)
-                
-        text_data = " ".join(full_text)
-        st.text_area("النص:", text_data, height=80)
+                text_part = f"[{word.start:.2f}] {word.word}"
+                full_text_with_time.append(text_part)
+                clean_text.append(word.word)
         
+        prompt_text = " ".join(full_text_with_time)
+        st.text_area("النص:", " ".join(clean_text), height=80)
     except Exception as e:
-        st.error(f"Error Whisper: {e}")
+        st.error(f"Whisper Error: {e}")
         return None
 
-    # 2. المخرج
-    st.info("⚡ 2. المخرج يختار الأصوات المناسبة...")
-    sfx_plan = analyze_text_with_regex(detailed_words)
+    # 2. Groq AI (Llama 3)
+    st.info("🦙 2. Llama 3 يدرس سياق الرواية...")
+    sfx_plan = analyze_text_with_groq(prompt_text)
     
     if sfx_plan:
-        st.success(f"✅ تم تحديد {len(sfx_plan)} نقطة صوتية.")
-        st.dataframe(sfx_plan)
+        st.success(f"✅ قرر الذكاء الاصطناعي إضافة {len(sfx_plan)} مؤثر!")
+        st.write(sfx_plan)
     else:
-        st.warning("⚠️ لم يتم العثور على مؤثرات.")
+        st.warning("⚠️ لم يقترح الذكاء الاصطناعي أي مؤثرات.")
+        return None
 
-    # 3. المونتاج
-    st.info("🎬 3. جاري تركيب الأصوات بتنويع سينمائي...")
+    # 3. Montage
+    st.info("🎬 3. جاري المونتاج...")
     full_audio = AudioSegment.from_file(voice_file)
-    full_audio = normalize(high_pass_filter(full_audio, 80)) 
+    full_audio = normalize(high_pass_filter(full_audio, 80))
     
     progress = st.progress(0)
     for i, item in enumerate(sfx_plan):
         sfx_name = item.get("sfx")
         time_sec = float(item.get("time"))
         
-        # نستخدم دالة التنويع الجديدة
-        sfx_path = get_diverse_sfx(sfx_name)
+        sfx_path = get_sfx_file(sfx_name)
         
         if sfx_path and os.path.exists(sfx_path):
             try:
                 sound = AudioSegment.from_file(sfx_path)
                 sound = smart_crop_audio(sound)
-                sound = camouflage_audio(sound)
-                
-                vol_adj = SCENE_MAP.get(sfx_name, {"vol": -5})["vol"]
-                sound = sound + vol_adj
-                sound = sound.fade_in(20).fade_out(400)
-                
+                # Vol adjustment
+                sound = sound - 5 
+                sound = sound.fade_in(50).fade_out(300)
                 full_audio = full_audio.overlay(sound, position=int(time_sec * 1000))
-            except Exception as e:
-                print(f"Merge error: {e}")
-        
+            except: pass
         progress.progress((i + 1) / len(sfx_plan))
 
-    output = "Diverse_Montage.mp3"
+    output = "Llama_Cinema.mp3"
     full_audio.export(output, format="mp3")
     return output
 
 # ==========================================
 # 🖥️ الواجهة
 # ==========================================
-# زر لتنظيف الذاكرة
-if st.sidebar.button("🗑️ حذف الأصوات القديمة (لتجديد المكتبة)"):
-    try:
+if st.sidebar.button("🗑️ حذف الملفات القديمة"):
+    if os.path.exists(SFX_DIR):
         shutil.rmtree(SFX_DIR)
         os.makedirs(SFX_DIR)
-        st.sidebar.success("تم الحذف! المونتاج القادم سيستخدم أصواتاً جديدة.")
-    except Exception as e:
-        st.sidebar.error(f"خطأ: {e}")
+    st.sidebar.success("تم التنظيف!")
 
 uploaded_file = st.file_uploader("ارفع ملف الصوت", type=["wav", "mp3"])
 
 if uploaded_file:
     st.audio(uploaded_file)
-    if st.button("🚀 ابدأ المونتاج السينمائي"):
+    if st.button("🚀 ابدأ المونتاج بالذكاء الاصطناعي"):
         with open("input.mp3", "wb") as f:
             f.write(uploaded_file.getbuffer())
         
@@ -310,7 +244,6 @@ if uploaded_file:
         
         if final:
             st.balloons()
-            st.success("🎉 المونتاج جاهز!")
             st.audio(final)
             with open(final, "rb") as f:
-                st.download_button("📥 تحميل", f, file_name="Cinema_Montage.mp3")
+                st.download_button("تحميل", f, file_name="AI_Montage.mp3")
