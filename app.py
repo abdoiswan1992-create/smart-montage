@@ -63,17 +63,34 @@ GLOBAL_NEGATIVE_TAGS = ["cartoon", "funny", "meme", "remix", "song", "music", "i
 # ==========================================
 # 🧠 دالة البحث عن الموديل (المنقذ)
 # ==========================================
+# ==========================================
+# 🧠 دالة البحث عن الموديل (تفضل النسخة 1.5 للحصة المجانية)
+# ==========================================
 def get_available_model():
     try:
-        # نحاول البحث عن موديل يدعم توليد المحتوى
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                if 'flash' in m.name or 'pro' in m.name:
-                    return m.name
-        return 'gemini-pro' # احتياطي
+        # قائمة الموديلات التي نريدها بالترتيب (الأقدم أولاً لأن حصته أكبر)
+        priority_list = [
+            "models/gemini-1.5-flash",        # الحصة الأكبر (15 RPM)
+            "models/gemini-1.5-flash-latest",
+            "models/gemini-1.5-pro",
+            "models/gemini-pro"
+        ]
+        
+        available_models = [m.name for m in genai.list_models()]
+        
+        # 1. ابحث في القائمة المفضلة
+        for target in priority_list:
+            if target in available_models:
+                return target
+                
+        # 2. إذا لم تجد، ابحث عن أي شيء يعمل
+        for m in available_models:
+            if 'generateContent' in genai.get_model(m).supported_generation_methods:
+                return m
+                
+        return "models/gemini-1.5-flash"
     except:
-        return 'gemini-1.5-flash'
-
+        return "models/gemini-1.5-flash"
 # ==========================================
 # ✂️ دوال المعالجة الذكية
 # ==========================================
@@ -254,3 +271,4 @@ if uploaded_file:
             st.audio(final)
             with open(final, "rb") as f:
                 st.download_button("تحميل", f, file_name="Cinema.mp3")
+
