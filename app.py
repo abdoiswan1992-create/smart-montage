@@ -3,9 +3,7 @@ import os
 import shutil
 import json
 import random
-import time
-import re
-import google.generativeai as genai
+import re  # 👈 بطل الحلقة (مكتبة النصوص الدقيقة)
 from pydub import AudioSegment
 from pydub.effects import normalize, high_pass_filter
 from pydub.silence import detect_nonsilent
@@ -15,12 +13,12 @@ import yt_dlp
 # ==========================================
 # ⚙️ إعدادات الصفحة
 # ==========================================
-st.set_page_config(page_title="المخرج السينمائي المحترف", page_icon="🎬", layout="centered")
+st.set_page_config(page_title="المخرج السريع (بدون إنترنت)", page_icon="⚡", layout="centered")
 
 st.markdown("""
 <div style="text-align: center;">
-    <h1>🎬 المخرج السينمائي المحترف</h1>
-    <p>نسخة: Gemini 2.5 Flash (Auto-Wait Enabled) ⏳✅</p>
+    <h1>⚡ المخرج السريع (Offline Mode)</h1>
+    <p>مونتاج فوري باستخدام خوارزميات اللغة الدقيقة (بدون ذكاء اصطناعي)</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -32,76 +30,102 @@ if not os.path.exists(SFX_DIR): os.makedirs(SFX_DIR)
 
 AudioSegment.converter = "ffmpeg" if shutil.which("ffmpeg") else "ffmpeg.exe"
 
-api_key = st.secrets.get("GEMINI_API_KEY")
-if api_key:
-    genai.configure(api_key=api_key)
-
-# القاموس
+# ==========================================
+# 📚 القاموس الذكي (كلمات دلالية دقيقة)
+# ==========================================
+# لاحظ: نضع الكلمات بدقة (الجذر اللغوي)
 SCENE_MAP = {
-    "footsteps": {"search": "footsteps sound effect isolated", "vol": -5},
-    "door_open": {"search": "door open squeak sound effect", "vol": -5},
-    "door_slam": {"search": "door slam sound effect", "vol": -3},
-    "rain": {"search": "rain heavy sound effect", "vol": -10},
-    "thunder": {"search": "thunder clap sound effect", "vol": -2},
-    "car_engine": {"search": "car engine start sound effect", "vol": -5},
-    "scream": {"search": "scream sound effect horror", "vol": -5},
-    "laugh": {"search": "evil laugh sound effect", "vol": -5},
-    "gunshot": {"search": "gunshot sound effect loud", "vol": -2},
-    "punch": {"search": "punch impact sound effect", "vol": -2},
-    "glass_break": {"search": "glass shatter sound effect", "vol": -4},
-    "paper": {"search": "paper rustling sound effect", "vol": -10},
-    "breath": {"search": "breath gasp sound effect isolated", "vol": -10},
-    "heartbeat": {"search": "heartbeat sound effect horror", "vol": -4},
-    "slide": {"search": "body drag dirt sound effect", "vol": -6},
-    "fire": {"search": "fire crackling sound effect", "vol": -8},
-    "wind": {"search": "wind howling sound effect", "vol": -8},
-    "sword": {"search": "sword draw sound effect", "vol": -5},
-    "reload": {"search": "gun reload sound effect", "vol": -5}
+    "footsteps": {
+        "triggers": ["مشى", "يمشي", "ركض", "خطوات", "أقدام", "يجري", "هروب"], 
+        "search": "footsteps sound effect isolated", "vol": -5
+    },
+    "door_open": {
+        "triggers": ["فتح الباب", "يفتح الباب", "صرير باب", "فتح"], 
+        "search": "door open squeak sound effect", "vol": -5
+    },
+    "door_slam": {
+        "triggers": ["أغلق الباب", "قفل الباب", "صفق الباب", "ارتطم"], 
+        "search": "door slam sound effect", "vol": -3
+    },
+    "rain": {
+        "triggers": ["مطر", "تمطر", "عاصفة", "غيوم", "شتاء"], 
+        "search": "rain heavy sound effect", "vol": -10
+    },
+    "thunder": {
+        "triggers": ["رعد", "برق", "صاعقة"], 
+        "search": "thunder clap sound effect", "vol": -2
+    },
+    "car_engine": {
+        "triggers": ["سيارة", "شاحنة", "محرك", "قيادة"], 
+        "search": "car engine start sound effect", "vol": -5
+    },
+    "scream": {
+        "triggers": ["صرخ", "يصرخ", "صراخ", "فزع", "رعب"], 
+        "search": "scream sound effect horror", "vol": -5
+    },
+    "laugh": {
+        "triggers": ["ضحك", "يضحك", "قهقهة", "سخرية"], 
+        "search": "evil laugh sound effect", "vol": -5
+    },
+    "gunshot": {
+        "triggers": ["أطلق النار", "رصاص", "مسدس", "بندقية", "سلاح"], 
+        "search": "gunshot sound effect loud", "vol": -2
+    },
+    "sword": {
+        "triggers": ["سيف", "نصل", "خنجر", "سل سيفه"], # لن يخلط مع "سنة" بعد الآن
+        "search": "sword draw sound effect", "vol": -5
+    },
+    "heartbeat": {
+        "triggers": ["قلبه", "خوف", "توتر", "رعب", "نبض"], 
+        "search": "heartbeat sound effect horror", "vol": -4
+    },
+    "punch": {
+        "triggers": ["لكم", "ضرب", "صفع", "هجوم"], 
+        "search": "punch impact sound effect", "vol": -2
+    }
 }
 
 GLOBAL_NEGATIVE_TAGS = ["cartoon", "funny", "meme", "remix", "song", "music", "intro"]
 
 # ==========================================
-# 🧠 دالة الاتصال الذكية (تتعامل مع 2.5 بصبر)
+# 🧠 المخرج "الخوارزمي" (بديل Gemini)
 # ==========================================
-def generate_with_smart_wait(prompt):
-    # نستخدم الموديل الوحيد المتاح لك
-    model_name = "gemini-2.5-flash"
-    st.info(f"🤖 جاري الاتصال بالموديل: {model_name}")
+def analyze_text_with_regex(transcript_segments):
+    """
+    يقوم هذا المخرج بتحليل النص كلمة بكلمة باستخدام Regex
+    لضمان أن الكلمة هي كلمة كاملة وليست جزءاً من كلمة أخرى.
+    """
+    plan = []
+    # تجميع كل الكلمات التي تم العثور عليها لتجنب التكرار القريب
+    last_trigger_time = -10
+    
+    for segment in transcript_segments:
+        text = segment['text'] # الكلمة
+        start = segment['start'] # التوقيت
+        
+        # إذا كان الفاصل الزمني قصير جداً عن المؤثر السابق، تجاهل (لمنع الازدحام)
+        if start - last_trigger_time < 3.0: 
+            continue
 
-    max_retries = 3
-    for attempt in range(max_retries + 1):
-        try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt)
-            return response
-        except Exception as e:
-            error_msg = str(e)
-            # التعامل مع خطأ تجاوز الحصة (429)
-            if "429" in error_msg:
-                if attempt < max_retries:
-                    # استخراج وقت الانتظار من رسالة جوجل
-                    wait_time = 60 # افتراضي
-                    match = re.search(r"retry in (\d+(\.\d+)?)", error_msg)
-                    if match:
-                        wait_time = float(match.group(1)) + 2 # إضافة ثانيتين للأمان
-                    
-                    st.warning(f"⚠️ الموديل مشغول ({model_name}). يطلب استراحة {wait_time:.1f} ثانية... ☕")
-                    
-                    # عداد تنازلي مرئي
-                    my_bar = st.progress(0)
-                    for i in range(100):
-                        time.sleep(wait_time / 100)
-                        my_bar.progress(i + 1)
-                    
-                    st.info("🔄 انتهت الاستراحة! جاري إعادة المحاولة...")
-                    continue
-                else:
-                    st.error("❌ السيرفر مشغول جداً. يرجى المحاولة لاحقاً أو تغيير مفتاح API.")
-                    return None
-            else:
-                st.error(f"❌ خطأ غير متوقع: {e}")
-                return None
+        found_sfx = None
+        
+        for sfx_key, data in SCENE_MAP.items():
+            for trigger in data["triggers"]:
+                # 🛡️ السحر هنا: نستخدم \b للتأكد من حدود الكلمة
+                # هذا يمنع "سن" من التفعيل داخل "سنة"
+                # ويسمح بـ "الـ" التعريف (اختياري)
+                pattern = f"\\b{trigger}\\b" 
+                
+                if re.search(pattern, text, re.UNICODE):
+                    found_sfx = sfx_key
+                    break
+            if found_sfx: break
+        
+        if found_sfx:
+            plan.append({"sfx": found_sfx, "time": start})
+            last_trigger_time = start
+            
+    return plan
 
 # ==========================================
 # ✂️ دوال المعالجة
@@ -127,6 +151,18 @@ def camouflage_audio(sound):
     except:
         return sound
 
+def calculate_relevance_score(video_info, search_term):
+    title = video_info.get('title', '').lower()
+    duration = video_info.get('duration', 0)
+    score = 0
+    if search_term.split()[0] in title: score += 20
+    if "original" in title or "hq" in title or "sfx" in title: score += 10
+    if 1 <= duration <= 15: score += 20
+    for tag in GLOBAL_NEGATIVE_TAGS:
+        if tag in title: score -= 100
+    if duration > 60: score -= 50
+    return score
+
 def get_best_sfx(category):
     files = [f for f in os.listdir(SFX_DIR) if f.startswith(category)]
     if files:
@@ -134,19 +170,39 @@ def get_best_sfx(category):
 
     st.toast(f"🦅 جاري صيد مؤثر: {category}...")
     search_base = SCENE_MAP.get(category, {"search": category + " sound effect"})["search"]
-    target_url = f"ytsearch1:{search_base} short sfx"
+    
+    ydl_opts_search = {
+        'quiet': True, 'default_search': 'ytsearch5', 'extract_flat': True,
+        'nocheckcertificate': True, 'ignoreerrors': True,
+    }
+
+    best_url = None
+    best_score = -9999
+    
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts_search) as ydl:
+            result = ydl.extract_info(f"{search_base} no copyright", download=False)
+            if 'entries' in result:
+                for entry in result['entries']:
+                    score = calculate_relevance_score(entry, search_base)
+                    if score > best_score:
+                        best_score = score
+                        best_url = entry['url']
+    except:
+        pass
+
+    target_url = best_url if best_url else f"ytsearch1:{search_base} short sfx"
     
     filename = f"{category}_{random.randint(1000,9999)}"
-    ydl_opts = {
+    ydl_opts_download = {
         'format': 'bestaudio/best',
         'outtmpl': os.path.join(SFX_DIR, filename),
         'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'}],
         'quiet': True,
-        'no_warnings': True
     }
     
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        with yt_dlp.YoutubeDL(ydl_opts_download) as ydl:
             ydl.download([target_url])
         return os.path.join(SFX_DIR, filename + ".mp3")
     except:
@@ -156,47 +212,42 @@ def get_best_sfx(category):
 # 🎬 المعالجة الرئيسية
 # ==========================================
 def process_audio(voice_file):
-    # 1. Whisper
-    st.info("🧠 1. جاري استماع وتحليل القصة (Whisper)...")
+    # 1. Whisper (استخراج النص)
+    st.info("🧠 1. جاري استخراج النص والكلمات (Whisper)...")
     try:
         model = WhisperModel("base", device="cpu", compute_type="int8")
         segments, _ = model.transcribe(voice_file, word_timestamps=True, language="ar")
-        full_transcript = []
+        
+        # نحتاج قائمة مفصلة للتحليل
+        detailed_words = []
+        full_text = []
+        
         for segment in segments:
             for word in segment.words:
-                full_transcript.append(f"[{word.start:.2f}] {word.word}")
-        text_data = " ".join(full_transcript)
-        st.text_area("النص:", text_data, height=80)
+                cleaned_word = word.word.strip()
+                detailed_words.append({'text': cleaned_word, 'start': word.start})
+                full_text.append(cleaned_word)
+                
+        st.text_area("النص:", " ".join(full_text), height=80)
+        
     except Exception as e:
         st.error(f"Error Whisper: {e}")
         return None
 
-    # 2. Gemini
-    st.info("🤖 2. جاري استشارة المخرج الفني (Gemini)...")
+    # 2. المخرج الخوارزمي (بديل Gemini)
+    st.info("⚡ 2. المخرج السريع يقوم بتحليل الكلمات الدلالية...")
     
-    prompt = f"""
-    بصفتك مخرج صوتي، استخرج المؤثرات من النص:
-    {text_data}
-    القائمة المتاحة: {list(SCENE_MAP.keys())}
-    القواعد: تجاهل النفي. افهم المجاز.
-    JSON Output: [{{"sfx": "name", "time": seconds}}]
-    """
+    # استدعاء الدالة المحلية بدلاً من API
+    sfx_plan = analyze_text_with_regex(detailed_words)
     
-    response = generate_with_smart_wait(prompt)
-    
-    if not response:
-        return None
-
-    try:
-        sfx_plan = json.loads(response.text.replace("```json", "").replace("```", "").strip())
-        st.success(f"✅ تم اعتماد {len(sfx_plan)} مؤثر!")
+    if not sfx_plan:
+        st.warning("⚠️ لم يجد المخرج أي كلمات دلالية (مثل: باب، ركض، سيارة...) في النص.")
+    else:
+        st.success(f"✅ تم العثور على {len(sfx_plan)} مؤثر!")
         st.write(sfx_plan)
-    except Exception as e:
-        st.error(f"فشل في قراءة رد Gemini: {e}")
-        return None
 
     # 3. المونتاج
-    st.info("🎬 3. جاري المونتاج (قص + تنكر + دمج)...")
+    st.info("🎬 3. جاري المونتاج...")
     full_audio = AudioSegment.from_file(voice_file)
     full_audio = normalize(high_pass_filter(full_audio, 100))
     
@@ -223,7 +274,7 @@ def process_audio(voice_file):
         
         progress.progress((i + 1) / len(sfx_plan))
 
-    output = "Smart_Cinema_Final.mp3"
+    output = "Fast_Montage_Result.mp3"
     full_audio.export(output, format="mp3")
     return output
 
@@ -234,7 +285,7 @@ uploaded_file = st.file_uploader("ارفع ملف الصوت", type=["wav", "mp3
 
 if uploaded_file:
     st.audio(uploaded_file)
-    if st.button("🚀 ابدأ المونتاج"):
+    if st.button("🚀 ابدأ المونتاج السريع"):
         with open("input.mp3", "wb") as f:
             f.write(uploaded_file.getbuffer())
         
@@ -245,4 +296,4 @@ if uploaded_file:
             st.success("تم الانتهاء! 🎧")
             st.audio(final)
             with open(final, "rb") as f:
-                st.download_button("تحميل", f, file_name="Cinema.mp3")
+                st.download_button("تحميل", f, file_name="Montage.mp3")
