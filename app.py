@@ -14,12 +14,12 @@ import yt_dlp
 # ==========================================
 # ⚙️ إعدادات الصفحة
 # ==========================================
-st.set_page_config(page_title="المخرج السينمائي (AI Timer)", page_icon="⏱️", layout="centered")
+st.set_page_config(page_title="المخرج السينمائي (Android Mode)", page_icon="📱", layout="centered")
 
 st.markdown("""
 <div style="text-align: center;">
-    <h1>⏱️ المخرج السينمائي (المقص الزمني)</h1>
-    <p>الذكاء الاصطناعي يحدد مدة كل مؤثر بدقة حسب المشهد</p>
+    <h1>📱 المخرج السينمائي (وضع الأندرويد)</h1>
+    <p>تجاوز حظر يوتيوب + فلترة ذكية للمؤثرات (الأهم فقط)</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -33,8 +33,11 @@ AudioSegment.converter = "ffmpeg" if shutil.which("ffmpeg") else "ffmpeg.exe"
 
 api_key = st.secrets.get("GROQ_API_KEY")
 
+# ==========================================
+# 📚 القاموس
+# ==========================================
 SCENE_MAP = {
-    "footsteps": ["running footsteps on dirt horror", "scared walking steps"],
+    "footsteps": ["running footsteps horror", "scared walking steps"],
     "door_open": ["creaky door open horror", "metal door slide"],
     "door_slam": ["loud door slam reverb", "impact thud sound"],
     "breathing": ["scared heavy breathing", "panic hyperventilation"],
@@ -48,7 +51,7 @@ SCENE_MAP = {
 }
 
 # ==========================================
-# 🧠 Groq AI (يحدد التوقيت والمدة)
+# 🧠 Groq AI (مع أمر التقييد)
 # ==========================================
 def analyze_text_with_groq(text_data):
     if not api_key:
@@ -57,16 +60,18 @@ def analyze_text_with_groq(text_data):
 
     client = Groq(api_key=api_key)
     
-    # نطلب من الذكاء الاصطناعي تحديد المدة (Duration)
+    # أمرنا الذكاء الاصطناعي بأن يكون "بخيلًا" في المؤثرات
     prompt = f"""
-    Act as a sound editor. Analyze this Egyptian Arabic script:
+    Act as a strict sound editor. Analyze this script:
     "{text_data}"
 
-    Task: Identify sound effects AND their ideal duration based on context.
+    Task: Select ONLY the **TOP 5-8 most critical** sound effects.
     
-    Example: 
-    - "He knocked quickly" -> Duration: 0.5s
-    - "The door opened slowly" -> Duration: 3.0s
+    Rules:
+    1. Do NOT clutter the scene. Less is more.
+    2. Minimum 10 seconds between effects.
+    3. Ignore minor movements. Focus on big events (Screams, Slams, Falls).
+    4. Duration is mandatory.
     
     Available Effects: {list(SCENE_MAP.keys())}
     
@@ -84,18 +89,30 @@ def analyze_text_with_groq(text_data):
         response_text = completion.choices[0].message.content
         parsed = json.loads(response_text)
         
-        # استخراج البيانات بمرونة
-        if "sfx" in parsed: return parsed["sfx"]
-        if isinstance(parsed, list): return parsed
-        for key in parsed:
-            if isinstance(parsed[key], list): return parsed[key]
-        return []
+        # استخراج البيانات
+        sfx_list = []
+        if "sfx" in parsed: sfx_list = parsed["sfx"]
+        elif isinstance(parsed, list): sfx_list = parsed
+        else:
+            for key in parsed:
+                if isinstance(parsed[key], list): sfx_list = parsed[key]
+        
+        # 🛡️ فلتر إضافي بالكود: نمنع أي مؤثرين بينهم أقل من 5 ثواني
+        filtered_list = []
+        last_time = -10
+        for item in sfx_list:
+            if item['time'] - last_time > 5.0: # شرط 5 ثواني
+                filtered_list.append(item)
+                last_time = item['time']
+        
+        return filtered_list
+
     except Exception as e:
         st.error(f"Groq Error: {e}")
         return []
 
 # ==========================================
-# 📥 التحميل
+# 📥 التحميل (Android Mode لتجاوز الحظر)
 # ==========================================
 def get_sfx_file(category):
     search_query = random.choice(SCENE_MAP.get(category, [category]))
@@ -103,18 +120,21 @@ def get_sfx_file(category):
     filename_path = os.path.join(SFX_DIR, filename_base)
     
     existing = [f for f in os.listdir(SFX_DIR) if f.startswith(category)]
-    if existing and random.random() > 0.4: 
-        selected = os.path.join(SFX_DIR, random.choice(existing))
-        if os.path.getsize(selected) > 5000: return selected
+    if existing:
+        return os.path.join(SFX_DIR, random.choice(existing))
 
-    st.toast(f"🦅 تحميل: {search_query}...")
+    st.toast(f"📱 تحميل (Android): {search_query}...")
     
+    # 👇 الإعدادات السحرية لتجاوز الحظر
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': filename_path,
         'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'}],
         'quiet': True,
         'no_warnings': True,
+        'nocheckcertificate': True,
+        # 👇 هذه السطر هو الحل: ندعي أننا تطبيق أندرويد
+        'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
         'max_filesize': 10*1024*1024,
         'match_filter': yt_dlp.utils.match_filter_func("duration < 60"),
     }
@@ -123,32 +143,24 @@ def get_sfx_file(category):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([f"ytsearch1:{search_query} sound effect no copyright"])
         return filename_path + ".mp3"
-    except:
-        if existing: return os.path.join(SFX_DIR, random.choice(existing))
+    except Exception as e:
+        print(f"Download Fail: {e}")
         return None
 
 # ==========================================
-# ✂️ القص الذكي جداً (Super Smart Crop)
+# ✂️ القص الذكي
 # ==========================================
 def super_smart_crop(sound, desired_duration_sec):
     try:
-        # 1. أولاً: نحذف الصمت من البداية (Trim Silence)
-        # نستخدم عتبة حساسة (-30dB) للتأكد من بدء الصوت فوراً
         nonsilent = detect_nonsilent(sound, min_silence_len=50, silence_thresh=-30)
-        
         if nonsilent:
             start_trim = nonsilent[0][0]
             sound = sound[start_trim:]
         
-        # 2. ثانياً: نطبق المدة التي طلبها الذكاء الاصطناعي
         desired_ms = int(desired_duration_sec * 1000)
-        
         if len(sound) > desired_ms:
-            # قص الزائد
             sound = sound[:desired_ms]
-            # عمل Fade Out سريع في النهاية لكي لا ينقطع الصوت فجأة
             sound = sound.fade_out(150)
-        
         return sound
     except:
         return sound
@@ -176,17 +188,17 @@ def process_audio(voice_file):
         st.error(f"Whisper Error: {e}")
         return None
 
-    st.info("⏱️ 2. الذكاء الاصطناعي يحدد توقيت ومدة كل مؤثر...")
+    st.info("📱 2. الذكاء الاصطناعي يختار أهم اللحظات (Top 8)...")
     sfx_plan = analyze_text_with_groq(prompt_text)
     
     if sfx_plan:
-        st.success(f"✅ تم التخطيط لـ {len(sfx_plan)} مؤثر!")
-        st.write(sfx_plan) # سيعرض لك المدة المقترحة لكل صوت
+        st.success(f"✅ تم اختيار {len(sfx_plan)} مؤثر جوهري فقط.")
+        st.write(sfx_plan)
     else:
         st.warning("⚠️ لم يتم تحديد مؤثرات.")
         return None
 
-    st.info("🎬 3. جاري القص والدمج الدقيق...")
+    st.info("🎬 3. جاري التحميل والدمج...")
     full_audio = AudioSegment.from_file(voice_file)
     full_audio = normalize(high_pass_filter(full_audio, 80))
     
@@ -194,34 +206,28 @@ def process_audio(voice_file):
     for i, item in enumerate(sfx_plan):
         sfx_name = item.get("sfx")
         time_sec = float(item.get("time"))
-        # المدة الافتراضية 2 ثانية إذا لم يحددها الذكاء الاصطناعي
-        duration = float(item.get("duration", 2.0)) 
+        duration = float(item.get("duration", 2.0))
         
         sfx_path = get_sfx_file(sfx_name)
         
         if sfx_path and os.path.exists(sfx_path):
             try:
                 sound = AudioSegment.from_file(sfx_path)
-                
-                # 👇 هنا نطبق القص الذكي بناءً على أوامر الذكاء الاصطناعي
                 sound = super_smart_crop(sound, duration)
-                
-                # خفض الصوت
-                sound = sound - 6
-                
+                sound = sound - 5
                 full_audio = full_audio.overlay(sound, position=int(time_sec * 1000))
             except Exception as e:
                 print(e)
         progress.progress((i + 1) / len(sfx_plan))
 
-    output = "Final_Timed_Montage.mp3"
+    output = "Final_Android_Mode.mp3"
     full_audio.export(output, format="mp3")
     return output
 
 # ==========================================
 # 🖥️ الواجهة
 # ==========================================
-if st.sidebar.button("🗑️ حذف الأصوات القديمة"):
+if st.sidebar.button("🗑️ تنظيف الذاكرة"):
     if os.path.exists(SFX_DIR):
         shutil.rmtree(SFX_DIR)
         os.makedirs(SFX_DIR)
@@ -231,7 +237,7 @@ uploaded_file = st.file_uploader("ارفع ملف الصوت", type=["wav", "mp3
 
 if uploaded_file:
     st.audio(uploaded_file)
-    if st.button("🚀 ابدأ المونتاج الدقيق"):
+    if st.button("🚀 ابدأ (Android Mode)"):
         with open("input.mp3", "wb") as f:
             f.write(uploaded_file.getbuffer())
         
@@ -241,4 +247,4 @@ if uploaded_file:
             st.balloons()
             st.audio(final)
             with open(final, "rb") as f:
-                st.download_button("تحميل", f, file_name="Timed_Montage.mp3")
+                st.download_button("تحميل", f, file_name="Cinema.mp3")
