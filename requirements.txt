@@ -1,6 +1,7 @@
 streamlit
-faster-whisper
 pydub
+faster-whisper
 yt-dlp
 ffmpeg-python
 google-generativeai
+groq
