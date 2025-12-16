@@ -3,3 +3,4 @@ faster-whisper
 pydub
 yt-dlp
 ffmpeg-python
+pyaudioop
