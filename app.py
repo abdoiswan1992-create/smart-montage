@@ -18,7 +18,7 @@ st.set_page_config(page_title="المخرج السينمائي المحترف", 
 st.markdown("""
 <div style="text-align: center;">
     <h1>🎬 المخرج السينمائي المحترف</h1>
-    <p>نسخة: Gemini + Smart Crop + Camouflage 🛡️</p>
+    <p>نسخة: Gemini Pro + Smart Crop 🛡️</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -36,7 +36,7 @@ api_key = st.secrets.get("GEMINI_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
 
-# القاموس الموسوعي (للبحث الدقيق)
+# القاموس الموسوعي
 SCENE_MAP = {
     "footsteps": {"search": "footsteps sound effect isolated", "vol": -5},
     "door_open": {"search": "door open squeak sound effect", "vol": -5},
@@ -62,13 +62,10 @@ SCENE_MAP = {
 GLOBAL_NEGATIVE_TAGS = ["cartoon", "funny", "meme", "remix", "song", "music", "intro"]
 
 # ==========================================
-# ✂️ دوال المعالجة الذكية (الميزات القديمة)
+# ✂️ دوال المعالجة الذكية
 # ==========================================
-
-# 1. المقص الذكي (Smart Crop)
 def smart_crop_audio(sound, silence_thresh=-40, padding=100):
     try:
-        # كشف الأجزاء التي فيها صوت
         nonsilent_ranges = detect_nonsilent(sound, min_silence_len=300, silence_thresh=silence_thresh)
         if len(nonsilent_ranges) > 0:
             start_i, end_i = nonsilent_ranges[0]
@@ -79,10 +76,8 @@ def smart_crop_audio(sound, silence_thresh=-40, padding=100):
     except:
         return sound
 
-# 2. التنكر من الكوبي رايت (Camouflage)
 def camouflage_audio(sound):
     try:
-        # تغيير السرعة بنسبة عشوائية بسيطة (4% +/-)
         speed_change = random.uniform(0.96, 1.04)
         new_sample_rate = int(sound.frame_rate * speed_change)
         camouflaged = sound._spawn(sound.raw_data, overrides={'frame_rate': new_sample_rate})
@@ -90,35 +85,26 @@ def camouflage_audio(sound):
     except:
         return sound
 
-# 3. حساب النقاط لاختيار أفضل فيديو (Relevance Score)
 def calculate_relevance_score(video_info, search_term):
     title = video_info.get('title', '').lower()
     duration = video_info.get('duration', 0)
     score = 0
-    
-    # نقاط إيجابية
     if search_term.split()[0] in title: score += 20
     if "original" in title or "hq" in title or "sfx" in title: score += 10
-    if 1 <= duration <= 15: score += 20 # المدة المثالية
-    
-    # نقاط سلبية (الفلتر)
+    if 1 <= duration <= 15: score += 20
     for tag in GLOBAL_NEGATIVE_TAGS:
         if tag in title: score -= 100
     if duration > 60: score -= 50
-    
     return score
 
 # ==========================================
 # 📥 دالة التحميل الذكية
 # ==========================================
 def get_best_sfx(category):
-    # 1. البحث المحلي
     files = [f for f in os.listdir(SFX_DIR) if f.startswith(category)]
     if files:
-        # اختيار عشوائي للتنويع إذا وجدنا ملفات سابقة
         return os.path.join(SFX_DIR, random.choice(files))
 
-    # 2. التحميل من يوتيوب (البحث الذكي)
     st.toast(f"🦅 جاري صيد مؤثر: {category}...")
     search_base = SCENE_MAP.get(category, {"search": category + " sound effect"})["search"]
     
@@ -144,7 +130,6 @@ def get_best_sfx(category):
 
     target_url = best_url if best_url else f"ytsearch1:{search_base} short sfx"
     
-    # التحميل الفعلي
     filename = f"{category}_{random.randint(1000,9999)}"
     ydl_opts_download = {
         'format': 'bestaudio/best',
@@ -190,8 +175,8 @@ def process_audio(voice_file):
     """
     
     sfx_plan = []
-  try:
-        # لاحظ المسافة الفارغة قبل بداية السطر هنا 👇
+    try:
+        # ✅ تم التصحيح: استخدام gemini-pro المضمون
         model_gemini = genai.GenerativeModel('gemini-pro')
         response = model_gemini.generate_content(prompt)
         sfx_plan = json.loads(response.text.replace("```json", "").replace("```", "").strip())
@@ -201,28 +186,24 @@ def process_audio(voice_file):
         st.error(f"Gemini Error: {e}")
         return None
 
-    # 3. المونتاج (مع الميزات الذكية)
+    # 3. المونتاج
     st.info("🎬 3. جاري المونتاج (قص + تنكر + دمج)...")
     full_audio = AudioSegment.from_file(voice_file)
-    full_audio = normalize(high_pass_filter(full_audio, 100)) # تحسين صوت الراوي
+    full_audio = normalize(high_pass_filter(full_audio, 100))
     
     progress = st.progress(0)
     for i, item in enumerate(sfx_plan):
         sfx_name = item.get("sfx")
         time_sec = float(item.get("time"))
         
-        # تحميل (أو استخدام المخزن)
         sfx_path = get_best_sfx(sfx_name)
         
         if sfx_path and os.path.exists(sfx_path):
             try:
                 sound = AudioSegment.from_file(sfx_path)
+                sound = smart_crop_audio(sound)
+                sound = camouflage_audio(sound)
                 
-                # 🔥 تطبيق الميزات الذكية 🔥
-                sound = smart_crop_audio(sound)    # قص الصمت
-                sound = camouflage_audio(sound)    # تنكر
-                
-                # ضبط الصوت
                 vol = SCENE_MAP.get(sfx_name, {"vol": -5})["vol"]
                 sound = sound + vol
                 sound = sound.fade_out(200)
@@ -256,5 +237,3 @@ if uploaded_file:
             st.audio(final)
             with open(final, "rb") as f:
                 st.download_button("تحميل", f, file_name="Cinema.mp3")
-
-
