@@ -18,7 +18,7 @@ st.set_page_config(page_title="المخرج السينمائي المحترف", 
 st.markdown("""
 <div style="text-align: center;">
     <h1>🎬 المخرج السينمائي المحترف</h1>
-    <p>نسخة: Gemini Pro + Smart Crop 🛡️</p>
+    <p>نسخة: الإصلاح الذكي (Auto-Detect Model) 🛡️</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -36,7 +36,6 @@ api_key = st.secrets.get("GEMINI_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
 
-# القاموس الموسوعي
 SCENE_MAP = {
     "footsteps": {"search": "footsteps sound effect isolated", "vol": -5},
     "door_open": {"search": "door open squeak sound effect", "vol": -5},
@@ -60,6 +59,20 @@ SCENE_MAP = {
 }
 
 GLOBAL_NEGATIVE_TAGS = ["cartoon", "funny", "meme", "remix", "song", "music", "intro"]
+
+# ==========================================
+# 🧠 دالة البحث عن الموديل (المنقذ)
+# ==========================================
+def get_available_model():
+    try:
+        # نحاول البحث عن موديل يدعم توليد المحتوى
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                if 'flash' in m.name or 'pro' in m.name:
+                    return m.name
+        return 'gemini-pro' # احتياطي
+    except:
+        return 'gemini-1.5-flash'
 
 # ==========================================
 # ✂️ دوال المعالجة الذكية
@@ -164,8 +177,13 @@ def process_audio(voice_file):
         st.error(f"Error Whisper: {e}")
         return None
 
-    # 2. Gemini
+    # 2. Gemini (مع البحث التلقائي)
     st.info("🤖 2. جاري استشارة المخرج الفني (Gemini)...")
+    
+    # 👇 هنا السحر: نختار الموديل المتاح تلقائياً
+    active_model_name = get_available_model()
+    st.success(f"✅ تم العثور على الموديل: {active_model_name}")
+    
     prompt = f"""
     بصفتك مخرج صوتي، استخرج المؤثرات من النص:
     {text_data}
@@ -176,14 +194,13 @@ def process_audio(voice_file):
     
     sfx_plan = []
     try:
-        # ✅ تم التصحيح: استخدام gemini-pro المضمون
-        model_gemini = genai.GenerativeModel('gemini-pro')
+        model_gemini = genai.GenerativeModel(active_model_name)
         response = model_gemini.generate_content(prompt)
         sfx_plan = json.loads(response.text.replace("```json", "").replace("```", "").strip())
         st.success(f"✅ تم اعتماد {len(sfx_plan)} مؤثر!")
         st.write(sfx_plan)
     except Exception as e:
-        st.error(f"Gemini Error: {e}")
+        st.error(f"Gemini Error ({active_model_name}): {e}")
         return None
 
     # 3. المونتاج
