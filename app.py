@@ -3,6 +3,7 @@ import os
 import shutil
 import json
 import random
+import time
 import google.generativeai as genai
 from pydub import AudioSegment
 from pydub.effects import normalize, high_pass_filter
@@ -18,7 +19,7 @@ st.set_page_config(page_title="المخرج السينمائي المحترف", 
 st.markdown("""
 <div style="text-align: center;">
     <h1>🎬 المخرج السينمائي المحترف</h1>
-    <p>نسخة: Gemini 1.5 Flash (Stable) 🛡️</p>
+    <p>نسخة: الصياد الذكي (Auto-Retry & Version Hunter) 🛡️</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -28,10 +29,8 @@ st.markdown("""
 SFX_DIR = "sfx_robust" 
 if not os.path.exists(SFX_DIR): os.makedirs(SFX_DIR)
 
-# إعداد FFMPEG
 AudioSegment.converter = "ffmpeg" if shutil.which("ffmpeg") else "ffmpeg.exe"
 
-# إعداد Gemini
 api_key = st.secrets.get("GEMINI_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
@@ -61,14 +60,55 @@ SCENE_MAP = {
 GLOBAL_NEGATIVE_TAGS = ["cartoon", "funny", "meme", "remix", "song", "music", "intro"]
 
 # ==========================================
-# 🧠 دالة اختيار الموديل (مثبتة على 1.5 لتجنب مشاكل الحصة)
+# 🧠 دالة "الصياد" للموديلات (The Model Hunter)
 # ==========================================
-def get_available_model():
-    # نستخدم هذا الموديل حصراً لأنه يملك أكبر حصة مجانية (15 RPM)
-    return "models/gemini-1.5-flash"
+def generate_with_retry(prompt):
+    # قائمة الموديلات بالأولوية (الأقدم والأرخص أولاً)
+    candidate_models = [
+        "gemini-1.5-flash-001",  # الإصدار المستقر القديم
+        "gemini-1.5-flash-002",  # الإصدار المستقر الجديد
+        "gemini-1.5-flash",      # الاسم العام
+        "gemini-1.5-pro",
+        "gemini-pro",
+        "gemini-2.5-flash"       # الجديد (الملجأ الأخير)
+    ]
+
+    last_error = None
+
+    for model_name in candidate_models:
+        try:
+            # st.toast(f"🕵️ تجربة الموديل: {model_name}...") 
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+            st.success(f"✅ تم الاتصال بنجاح عبر الموديل: {model_name}")
+            return response
+            
+        except Exception as e:
+            error_str = str(e)
+            
+            # حالة 404: الموديل غير موجود -> جرب التالي فوراً
+            if "404" in error_str or "not found" in error_str.lower():
+                continue 
+            
+            # حالة 429: تجاوز الحصة -> انتظر وحاول مرة واحدة
+            elif "429" in error_str:
+                st.warning(f"⚠️ الموديل {model_name} مشغول (429). جاري الانتظار 10 ثوانٍ...")
+                time.sleep(10)
+                try:
+                    response = model.generate_content(prompt)
+                    return response
+                except:
+                    continue # فشل بعد الانتظار، انتقل للتالي
+            
+            else:
+                last_error = e
+                continue
+
+    # إذا فشل كل شيء، ارفع الخطأ الأخير
+    raise last_error if last_error else Exception("لم يتم العثور على أي موديل متاح!")
 
 # ==========================================
-# ✂️ دوال المعالجة الذكية
+# ✂️ دوال المعالجة
 # ==========================================
 def smart_crop_audio(sound, silence_thresh=-40, padding=100):
     try:
@@ -103,9 +143,6 @@ def calculate_relevance_score(video_info, search_term):
     if duration > 60: score -= 50
     return score
 
-# ==========================================
-# 📥 دالة التحميل الذكية
-# ==========================================
 def get_best_sfx(category):
     files = [f for f in os.listdir(SFX_DIR) if f.startswith(category)]
     if files:
@@ -152,7 +189,7 @@ def get_best_sfx(category):
         return None
 
 # ==========================================
-# 🎬 المنطق الرئيسي (Process Audio)
+# 🎬 المعالجة الرئيسية
 # ==========================================
 def process_audio(voice_file):
     # 1. Whisper
@@ -170,9 +207,8 @@ def process_audio(voice_file):
         st.error(f"Error Whisper: {e}")
         return None
 
-    # 2. Gemini
-    active_model = get_available_model()
-    st.info(f"🤖 2. جاري استشارة المخرج الفني ({active_model})...")
+    # 2. Gemini (استدعاء الصياد الذكي)
+    st.info("🤖 2. جاري استشارة المخرج الفني (Gemini)...")
     
     prompt = f"""
     بصفتك مخرج صوتي، استخرج المؤثرات من النص:
@@ -184,13 +220,13 @@ def process_audio(voice_file):
     
     sfx_plan = []
     try:
-        model_gemini = genai.GenerativeModel(active_model)
-        response = model_gemini.generate_content(prompt)
+        # 👇 هنا التغيير الجوهري: استخدام دالة الصياد
+        response = generate_with_retry(prompt)
         sfx_plan = json.loads(response.text.replace("```json", "").replace("```", "").strip())
         st.success(f"✅ تم اعتماد {len(sfx_plan)} مؤثر!")
         st.write(sfx_plan)
     except Exception as e:
-        st.error(f"Gemini Error ({active_model}): {e}")
+        st.error(f"فشل الاتصال بجميع موديلات Gemini: {e}")
         return None
 
     # 3. المونتاج
