@@ -14,12 +14,12 @@ import yt_dlp
 # ==========================================
 # ⚙️ إعدادات الصفحة
 # ==========================================
-st.set_page_config(page_title="المخرج السينمائي (Android Mode)", page_icon="📱", layout="centered")
+st.set_page_config(page_title="المخرج السينمائي (Failsafe)", page_icon="🛡️", layout="centered")
 
 st.markdown("""
 <div style="text-align: center;">
-    <h1>📱 المخرج السينمائي (وضع الأندرويد)</h1>
-    <p>تجاوز حظر يوتيوب + فلترة ذكية للمؤثرات (الأهم فقط)</p>
+    <h1>🛡️ المخرج السينمائي (النسخة الآمنة)</h1>
+    <p>نظام ذكي لتفادي أخطاء التحميل + إدارة الذاكرة</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -34,7 +34,7 @@ AudioSegment.converter = "ffmpeg" if shutil.which("ffmpeg") else "ffmpeg.exe"
 api_key = st.secrets.get("GROQ_API_KEY")
 
 # ==========================================
-# 📚 القاموس
+# 📚 قاموس الأصوات
 # ==========================================
 SCENE_MAP = {
     "footsteps": ["running footsteps horror", "scared walking steps"],
@@ -51,7 +51,7 @@ SCENE_MAP = {
 }
 
 # ==========================================
-# 🧠 Groq AI (مع أمر التقييد)
+# 🧠 Groq AI
 # ==========================================
 def analyze_text_with_groq(text_data):
     if not api_key:
@@ -60,18 +60,16 @@ def analyze_text_with_groq(text_data):
 
     client = Groq(api_key=api_key)
     
-    # أمرنا الذكاء الاصطناعي بأن يكون "بخيلًا" في المؤثرات
     prompt = f"""
     Act as a strict sound editor. Analyze this script:
     "{text_data}"
 
-    Task: Select ONLY the **TOP 5-8 most critical** sound effects.
+    Task: Select ONLY the **TOP 5 most critical** sound effects.
     
     Rules:
-    1. Do NOT clutter the scene. Less is more.
-    2. Minimum 10 seconds between effects.
-    3. Ignore minor movements. Focus on big events (Screams, Slams, Falls).
-    4. Duration is mandatory.
+    1. Minimum 15 seconds between effects.
+    2. Focus on big events only.
+    3. Duration is mandatory.
     
     Available Effects: {list(SCENE_MAP.keys())}
     
@@ -89,7 +87,6 @@ def analyze_text_with_groq(text_data):
         response_text = completion.choices[0].message.content
         parsed = json.loads(response_text)
         
-        # استخراج البيانات
         sfx_list = []
         if "sfx" in parsed: sfx_list = parsed["sfx"]
         elif isinstance(parsed, list): sfx_list = parsed
@@ -97,11 +94,11 @@ def analyze_text_with_groq(text_data):
             for key in parsed:
                 if isinstance(parsed[key], list): sfx_list = parsed[key]
         
-        # 🛡️ فلتر إضافي بالكود: نمنع أي مؤثرين بينهم أقل من 5 ثواني
+        # فلترة لضمان تباعد 10 ثواني على الأقل
         filtered_list = []
-        last_time = -10
+        last_time = -20
         for item in sfx_list:
-            if item['time'] - last_time > 5.0: # شرط 5 ثواني
+            if item['time'] - last_time > 10.0:
                 filtered_list.append(item)
                 last_time = item['time']
         
@@ -112,43 +109,67 @@ def analyze_text_with_groq(text_data):
         return []
 
 # ==========================================
-# 📥 التحميل (Android Mode لتجاوز الحظر)
+# 📥 التحميل الآمن (The Fix)
 # ==========================================
 def get_sfx_file(category):
+    # 1. الأولوية القصوى: فحص الذاكرة المحلية (أسرع وأضمن)
+    # نبحث عن أي ملف في المجلد يحتوي اسمه على نوع المؤثر
+    existing_files = [f for f in os.listdir(SFX_DIR) if category in f]
+    if existing_files:
+        # نختار واحداً عشوائياً ونستخدمه فوراً دون تحميل
+        selected_file = os.path.join(SFX_DIR, random.choice(existing_files))
+        if os.path.getsize(selected_file) > 1000: # تأكد أنه ليس فارغاً
+            st.toast(f"✅ تم استخدام ملف محفوظ: {category}")
+            return selected_file
+
+    # 2. الخطة البديلة: التحميل
     search_query = random.choice(SCENE_MAP.get(category, [category]))
     filename_base = f"{category}_{random.randint(100,999)}"
     filename_path = os.path.join(SFX_DIR, filename_base)
-    
-    existing = [f for f in os.listdir(SFX_DIR) if f.startswith(category)]
-    if existing:
-        return os.path.join(SFX_DIR, random.choice(existing))
 
-    st.toast(f"📱 تحميل (Android): {search_query}...")
+    st.toast(f"⬇️ محاولة تحميل جديد: {category}...")
     
-    # 👇 الإعدادات السحرية لتجاوز الحظر
-    ydl_opts = {
+    # المحاولة الأولى: إعدادات الأندرويد
+    ydl_opts_android = {
         'format': 'bestaudio/best',
         'outtmpl': filename_path,
         'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'}],
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        # 👇 هذه السطر هو الحل: ندعي أننا تطبيق أندرويد
-        'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+        'extractor_args': {'youtube': {'player_client': ['android']}},
         'max_filesize': 10*1024*1024,
-        'match_filter': yt_dlp.utils.match_filter_func("duration < 60"),
+        'match_filter': yt_dlp.utils.match_filter_func("duration < 45"),
     }
-    
+
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        with yt_dlp.YoutubeDL(ydl_opts_android) as ydl:
             ydl.download([f"ytsearch1:{search_query} sound effect no copyright"])
-        return filename_path + ".mp3"
-    except Exception as e:
-        print(f"Download Fail: {e}")
+        if os.path.exists(filename_path + ".mp3"): return filename_path + ".mp3"
+    except:
+        pass # فشلت الأولى، ننتقل للثانية بصمت
+
+    # المحاولة الثانية: إعدادات الويب (Fallback)
+    ydl_opts_web = {
+        'format': 'bestaudio/best',
+        'outtmpl': filename_path + "_web",
+        'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'}],
+        'quiet': True,
+        'nocheckcertificate': True,
+        'max_filesize': 10*1024*1024,
+        'match_filter': yt_dlp.utils.match_filter_func("duration < 30"),
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts_web) as ydl:
+            ydl.download([f"ytsearch1:{search_query} free sound effect"])
+        if os.path.exists(filename_path + "_web.mp3"): return filename_path + "_web.mp3"
+    except:
+        print(f"فشلت جميع محاولات التحميل لـ {category}")
         return None
 
 # ==========================================
-# ✂️ القص الذكي
+# ✂️ المعالجة
 # ==========================================
 def super_smart_crop(sound, desired_duration_sec):
     try:
@@ -165,9 +186,6 @@ def super_smart_crop(sound, desired_duration_sec):
     except:
         return sound
 
-# ==========================================
-# 🎬 المعالجة
-# ==========================================
 def process_audio(voice_file):
     st.info("🧠 1. جاري استماع وتحليل القصة...")
     try:
@@ -188,17 +206,17 @@ def process_audio(voice_file):
         st.error(f"Whisper Error: {e}")
         return None
 
-    st.info("📱 2. الذكاء الاصطناعي يختار أهم اللحظات (Top 8)...")
+    st.info("🤖 2. الذكاء الاصطناعي يخطط للمونتاج...")
     sfx_plan = analyze_text_with_groq(prompt_text)
     
     if sfx_plan:
-        st.success(f"✅ تم اختيار {len(sfx_plan)} مؤثر جوهري فقط.")
+        st.success(f"✅ تم تحديد {len(sfx_plan)} مؤثرات.")
         st.write(sfx_plan)
     else:
         st.warning("⚠️ لم يتم تحديد مؤثرات.")
         return None
 
-    st.info("🎬 3. جاري التحميل والدمج...")
+    st.info("🎬 3. جاري التنفيذ...")
     full_audio = AudioSegment.from_file(voice_file)
     full_audio = normalize(high_pass_filter(full_audio, 80))
     
@@ -214,30 +232,30 @@ def process_audio(voice_file):
             try:
                 sound = AudioSegment.from_file(sfx_path)
                 sound = super_smart_crop(sound, duration)
-                sound = sound - 5
+                sound = sound - 6
                 full_audio = full_audio.overlay(sound, position=int(time_sec * 1000))
             except Exception as e:
                 print(e)
         progress.progress((i + 1) / len(sfx_plan))
 
-    output = "Final_Android_Mode.mp3"
+    output = "Final_Failsafe_Montage.mp3"
     full_audio.export(output, format="mp3")
     return output
 
 # ==========================================
 # 🖥️ الواجهة
 # ==========================================
-if st.sidebar.button("🗑️ تنظيف الذاكرة"):
+if st.sidebar.button("🗑️ تنظيف الذاكرة (اضغط فقط عند الضرورة)"):
     if os.path.exists(SFX_DIR):
         shutil.rmtree(SFX_DIR)
         os.makedirs(SFX_DIR)
-    st.sidebar.success("تم!")
+    st.sidebar.success("تم التنظيف!")
 
 uploaded_file = st.file_uploader("ارفع ملف الصوت", type=["wav", "mp3"])
 
 if uploaded_file:
     st.audio(uploaded_file)
-    if st.button("🚀 ابدأ (Android Mode)"):
+    if st.button("🚀 ابدأ"):
         with open("input.mp3", "wb") as f:
             f.write(uploaded_file.getbuffer())
         
