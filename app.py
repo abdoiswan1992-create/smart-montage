@@ -4,6 +4,7 @@ import shutil
 import json
 import random
 import time
+import re  # 👈 مكتبة استخراج الأرقام من النصوص
 import google.generativeai as genai
 from pydub import AudioSegment
 from pydub.effects import normalize, high_pass_filter
@@ -19,7 +20,7 @@ st.set_page_config(page_title="المخرج السينمائي المحترف", 
 st.markdown("""
 <div style="text-align: center;">
     <h1>🎬 المخرج السينمائي المحترف</h1>
-    <p>نسخة: الصياد الذكي (Auto-Retry & Version Hunter) 🛡️</p>
+    <p>نسخة: الانتظار الذكي (Reads Google's Mind) 🧠⏳</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -60,52 +61,63 @@ SCENE_MAP = {
 GLOBAL_NEGATIVE_TAGS = ["cartoon", "funny", "meme", "remix", "song", "music", "intro"]
 
 # ==========================================
-# 🧠 دالة "الصياد" للموديلات (The Model Hunter)
+# 🧠 دالة الموديل الذكية (تستخرج وقت الانتظار من الرسالة)
 # ==========================================
-def generate_with_retry(prompt):
-    # قائمة الموديلات بالأولوية (الأقدم والأرخص أولاً)
-    candidate_models = [
-        "gemini-1.5-flash-001",  # الإصدار المستقر القديم
-        "gemini-1.5-flash-002",  # الإصدار المستقر الجديد
-        "gemini-1.5-flash",      # الاسم العام
-        "gemini-1.5-pro",
-        "gemini-pro",
-        "gemini-2.5-flash"       # الجديد (الملجأ الأخير)
-    ]
+def get_best_available_model():
+    try:
+        all_models = list(genai.list_models())
+        supported = [m.name for m in all_models if 'generateContent' in m.supported_generation_methods]
+        
+        # محاولة البحث عن موديل 1.5 لأنه الأفضل
+        for m in supported:
+            if "1.5-flash" in m and "001" in m: return m
+        for m in supported:
+            if "1.5-flash" in m: return m
+        if supported: return supported[0]
+        return "models/gemini-1.5-flash"
+    except:
+        return "models/gemini-1.5-flash"
 
-    last_error = None
+def extract_wait_time(error_message):
+    # نبحث عن نمط: retry in X.XX seconds
+    match = re.search(r"retry in (\d+(\.\d+)?)", str(error_message))
+    if match:
+        return float(match.group(1)) + 2 # نضيف ثانيتين للأمان
+    return 60 # افتراضي إذا لم نجد الرقم
 
-    for model_name in candidate_models:
+def generate_with_smart_wait(prompt):
+    model_name = get_best_available_model()
+    st.info(f"🤖 جاري الاتصال بالموديل: {model_name}")
+
+    max_retries = 3
+    for attempt in range(max_retries + 1):
         try:
-            # st.toast(f"🕵️ تجربة الموديل: {model_name}...") 
             model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt)
-            st.success(f"✅ تم الاتصال بنجاح عبر الموديل: {model_name}")
             return response
-            
         except Exception as e:
-            error_str = str(e)
-            
-            # حالة 404: الموديل غير موجود -> جرب التالي فوراً
-            if "404" in error_str or "not found" in error_str.lower():
-                continue 
-            
-            # حالة 429: تجاوز الحصة -> انتظر وحاول مرة واحدة
-            elif "429" in error_str:
-                st.warning(f"⚠️ الموديل {model_name} مشغول (429). جاري الانتظار 10 ثوانٍ...")
-                time.sleep(10)
-                try:
-                    response = model.generate_content(prompt)
-                    return response
-                except:
-                    continue # فشل بعد الانتظار، انتقل للتالي
-            
+            error_msg = str(e)
+            if "429" in error_msg:
+                if attempt < max_retries:
+                    # 👇 هنا السحر: نستخرج الرقم من رسالة الخطأ
+                    wait_time = extract_wait_time(error_msg)
+                    
+                    st.warning(f"⚠️ طلب جوجل استراحة لمدة {wait_time:.1f} ثانية. جاري التنفيذ... ⏳")
+                    
+                    # عداد تنازلي دقيق
+                    my_bar = st.progress(0)
+                    total_steps = 100
+                    for i in range(total_steps):
+                        time.sleep(wait_time / total_steps)
+                        my_bar.progress(i + 1)
+                    
+                    st.info("🔄 انتهت الاستراحة! إعادة المحاولة الآن...")
+                    continue
+                else:
+                    st.error("❌ للأسف، السيرفر مشغول جداً حتى بعد الانتظار.")
+                    raise e
             else:
-                last_error = e
-                continue
-
-    # إذا فشل كل شيء، ارفع الخطأ الأخير
-    raise last_error if last_error else Exception("لم يتم العثور على أي موديل متاح!")
+                raise e
 
 # ==========================================
 # ✂️ دوال المعالجة
@@ -207,7 +219,7 @@ def process_audio(voice_file):
         st.error(f"Error Whisper: {e}")
         return None
 
-    # 2. Gemini (استدعاء الصياد الذكي)
+    # 2. Gemini
     st.info("🤖 2. جاري استشارة المخرج الفني (Gemini)...")
     
     prompt = f"""
@@ -220,13 +232,13 @@ def process_audio(voice_file):
     
     sfx_plan = []
     try:
-        # 👇 هنا التغيير الجوهري: استخدام دالة الصياد
-        response = generate_with_retry(prompt)
+        # 👇 استخدام دالة الانتظار الذكي
+        response = generate_with_smart_wait(prompt)
         sfx_plan = json.loads(response.text.replace("```json", "").replace("```", "").strip())
         st.success(f"✅ تم اعتماد {len(sfx_plan)} مؤثر!")
         st.write(sfx_plan)
     except Exception as e:
-        st.error(f"فشل الاتصال بجميع موديلات Gemini: {e}")
+        st.error(f"فشل الاتصال بـ Gemini: {e}")
         return None
 
     # 3. المونتاج
