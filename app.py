@@ -52,15 +52,22 @@ SCENE_MAP = {
 }
 
 # ==========================================
-# 🧠 العقل المدبر (Groq / Llama 3)
+# 🧠 العقل المدبر (Groq / Llama 3) مع نظام المحاولات
 # ==========================================
 def analyze_text_with_groq(text_data):
     if not api_key:
-        st.error("⚠️ لم يتم العثور على مفتاح GROQ_API_KEY في الـ Secrets!")
+        st.error("⚠️ يجب إضافة GROQ_API_KEY في الـ Secrets!")
         return []
 
     client = Groq(api_key=api_key)
     
+    # قائمة الموديلات: نجرب الأحدث، وإذا فشل نجرب الذي يليه
+    models_to_try = [
+        "llama-3.3-70b-versatile",  # الأحدث والأذكى
+        "llama-3.1-70b-versatile",
+        "mixtral-8x7b-32768"        # بديل قوي جداً
+    ]
+
     prompt = f"""
     You are an expert movie sound director. Analyze this story script (Egyptian Arabic):
     "{text_data}"
@@ -77,26 +84,37 @@ def analyze_text_with_groq(text_data):
     5. Be precise with timing based on the timestamps in text (e.g., [12.50]).
     """
 
-    try:
-        completion = client.chat.completions.create(
-            model="llama3-70b-8192",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-            response_format={"type": "json_object"}
-        )
-        
-        response_text = completion.choices[0].message.content
-        # محاولة قراءة JSON بمرونة
-        parsed = json.loads(response_text)
-        if "sfx" in parsed: return parsed["sfx"]
-        if isinstance(parsed, list): return parsed
-        for key in parsed:
-            if isinstance(parsed[key], list): return parsed[key]
-        return []
+    for model_name in models_to_try:
+        try:
+            # st.toast(f"جاري تجربة الموديل: {model_name}") # للتجربة
+            completion = client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                response_format={"type": "json_object"}
+            )
+            
+            response_text = completion.choices[0].message.content
+            
+            # محاولة قراءة JSON بمرونة
+            parsed = json.loads(response_text)
+            if "sfx" in parsed: return parsed["sfx"]
+            if isinstance(parsed, list): return parsed
+            for key in parsed:
+                if isinstance(parsed[key], list): return parsed[key]
+            return [] # إذا كان الرد فارغاً لكن صحيحاً
 
-    except Exception as e:
-        st.error(f"Groq AI Error: {e}")
-        return []
+        except Exception as e:
+            error_msg = str(e)
+            # إذا كان الخطأ "موديل غير موجود"، جرب التالي بصمت
+            if "model_decommissioned" in error_msg or "not found" in error_msg or "404" in error_msg:
+                continue
+            # أخطاء أخرى قد تكون مهمة
+            print(f"Error with model {model_name}: {e}")
+            continue
+
+    st.error("❌ لم نتمكن من الاتصال بأي موديل من Groq. تأكد من المفتاح أو جرب لاحقاً.")
+    return []
 
 # ==========================================
 # 📥 التحميل المتنوع
