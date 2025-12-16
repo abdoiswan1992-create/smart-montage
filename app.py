@@ -18,7 +18,7 @@ st.set_page_config(page_title="المخرج السينمائي المحترف", 
 st.markdown("""
 <div style="text-align: center;">
     <h1>🎬 المخرج السينمائي المحترف</h1>
-    <p>نسخة: الإصلاح الذكي (Auto-Detect Model) 🛡️</p>
+    <p>نسخة: Gemini 1.5 Flash (Stable) 🛡️</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -61,36 +61,12 @@ SCENE_MAP = {
 GLOBAL_NEGATIVE_TAGS = ["cartoon", "funny", "meme", "remix", "song", "music", "intro"]
 
 # ==========================================
-# 🧠 دالة البحث عن الموديل (المنقذ)
-# ==========================================
-# ==========================================
-# 🧠 دالة البحث عن الموديل (تفضل النسخة 1.5 للحصة المجانية)
+# 🧠 دالة اختيار الموديل (مثبتة على 1.5 لتجنب مشاكل الحصة)
 # ==========================================
 def get_available_model():
-    try:
-        # قائمة الموديلات التي نريدها بالترتيب (الأقدم أولاً لأن حصته أكبر)
-        priority_list = [
-            "models/gemini-1.5-flash",        # الحصة الأكبر (15 RPM)
-            "models/gemini-1.5-flash-latest",
-            "models/gemini-1.5-pro",
-            "models/gemini-pro"
-        ]
-        
-        available_models = [m.name for m in genai.list_models()]
-        
-        # 1. ابحث في القائمة المفضلة
-        for target in priority_list:
-            if target in available_models:
-                return target
-                
-        # 2. إذا لم تجد، ابحث عن أي شيء يعمل
-        for m in available_models:
-            if 'generateContent' in genai.get_model(m).supported_generation_methods:
-                return m
-                
-        return "models/gemini-1.5-flash"
-    except:
-        return "models/gemini-1.5-flash"
+    # نستخدم هذا الموديل حصراً لأنه يملك أكبر حصة مجانية (15 RPM)
+    return "models/gemini-1.5-flash"
+
 # ==========================================
 # ✂️ دوال المعالجة الذكية
 # ==========================================
@@ -194,12 +170,9 @@ def process_audio(voice_file):
         st.error(f"Error Whisper: {e}")
         return None
 
-    # 2. Gemini (مع البحث التلقائي)
-    st.info("🤖 2. جاري استشارة المخرج الفني (Gemini)...")
-    
-    # 👇 هنا السحر: نختار الموديل المتاح تلقائياً
-    active_model_name = get_available_model()
-    st.success(f"✅ تم العثور على الموديل: {active_model_name}")
+    # 2. Gemini
+    active_model = get_available_model()
+    st.info(f"🤖 2. جاري استشارة المخرج الفني ({active_model})...")
     
     prompt = f"""
     بصفتك مخرج صوتي، استخرج المؤثرات من النص:
@@ -211,13 +184,13 @@ def process_audio(voice_file):
     
     sfx_plan = []
     try:
-        model_gemini = genai.GenerativeModel(active_model_name)
+        model_gemini = genai.GenerativeModel(active_model)
         response = model_gemini.generate_content(prompt)
         sfx_plan = json.loads(response.text.replace("```json", "").replace("```", "").strip())
         st.success(f"✅ تم اعتماد {len(sfx_plan)} مؤثر!")
         st.write(sfx_plan)
     except Exception as e:
-        st.error(f"Gemini Error ({active_model_name}): {e}")
+        st.error(f"Gemini Error ({active_model}): {e}")
         return None
 
     # 3. المونتاج
@@ -271,4 +244,3 @@ if uploaded_file:
             st.audio(final)
             with open(final, "rb") as f:
                 st.download_button("تحميل", f, file_name="Cinema.mp3")
-
