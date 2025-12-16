@@ -1,218 +1,139 @@
 import os
 import random
 import time
+import json
+import shutil
+import streamlit as st  # 👈 ضروري لقراءة المفتاح السري
+import google.generativeai as genai # 👈 مكتبة الذكاء الاصطناعي
 from pydub import AudioSegment
 from pydub.effects import normalize, high_pass_filter
 from pydub.silence import detect_nonsilent
 import yt_dlp
-from faster_whisper import WhisperModel  # 👈 البطل الجديد
-
-import shutil  # 👈 تأكد من إضافة هذا السطر الجديد لأنه ضروري للفحص
+from faster_whisper import WhisperModel
 
 # ==========================================
-# 🛠️ الإعدادات والمسارات (معدلة للعمل أونلاين + محلياً)
+# 🛠️ الإعدادات والمسارات
 # ==========================================
 current_dir = os.getcwd()
 
-# الفحص الذكي: هل FFMPEG مثبت في النظام (للسيرفر) أم نستخدم الملف المحلي (لك)؟
+# تهيئة Gemini (سيحاول قراءة المفتاح من أسرار Streamlit)
+try:
+    if "GEMINI_API_KEY" in st.secrets:
+        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+        print("✅ تم تفعيل Gemini بنجاح!")
+    else:
+        print("⚠️ لم يتم العثور على GEMINI_API_KEY في الـ Secrets.")
+except Exception as e:
+    print(f"⚠️ ملاحظة: نحن نعمل محلياً أو لا يوجد مفتاح ({e})")
+
+# الفحص الذكي لـ FFMPEG
 if shutil.which("ffmpeg"):
-    # حالة السيرفر (Linux/Streamlit Cloud)
     AudioSegment.converter = "ffmpeg"
 else:
-    # حالة جهازك الشخصي (Windows)
     path_ffmpeg = os.path.join(current_dir, "ffmpeg.exe")
     if os.path.exists(path_ffmpeg):
         AudioSegment.converter = path_ffmpeg
         os.environ["PATH"] += os.pathsep + current_dir
     else:
-        print("⚠️ تحذير: لم يتم العثور على FFMPEG! تأكد من وجود ملف ffmpeg.exe")
+        print("⚠️ تحذير: لم يتم العثور على FFMPEG!")
 
-# إعداد مجلد المؤثرات (نحافظ على sfx_robust)
 SFX_DIR = "sfx_robust" 
 if not os.path.exists(SFX_DIR): os.makedirs(SFX_DIR)
 
 # ==========================================
-# 🧠 القاموس الموسوعي (كما هو)
-# ==========================================
-# ==========================================
-# 🧠 القاموس الموسوعي (فصحى + مصري 🇪🇬)
+# 🧠 القاموس الموسوعي (كما هو - سنستخدمه كمرجع للبحث)
 # ==========================================
 SCENE_MAP = {
-    # -----------------------------------
-    # 🏃 حركات الجسم (Foley)
-    # -----------------------------------
     "slide": { 
-        # مصري: اتسحب، بيجرجر، بيزحف
-        "triggers": ["زحف", "انزلق", "يجر", "زاحف", "تدحرج", "احتكاك", "اتسحب", "بيجر", "بيسحف"],
-        "search": "body drag dirt sound effect",
-        "positive": ["dragging", "floor", "heavy", "fabric", "sliding"],
-        "vol": -6, "cooldown": 15
+        "triggers": ["زحف", "انزلق"], "search": "body drag dirt sound effect",
+        "positive": ["dragging", "floor"], "vol": -6, "cooldown": 15
     },
     "breath": {
-        # مصري: بينهج، نفسه مقطوع، بيموت
-        "triggers": ["أنفاس", "تنهد", "شهيق", "زفير", "يلهث", "خائف", "يستريح", "بينهج", "كرشة نفس", "نفسه", "شهق"],
-        "search": "breath gasp sound effect isolated",
-        "positive": ["scared", "heavy", "running", "female", "male"],
-        "vol": -12, "cooldown": 20
+        "triggers": ["أنفاس", "تنهد"], "search": "breath gasp sound effect isolated",
+        "positive": ["scared", "heavy"], "vol": -12, "cooldown": 20
     },
     "heartbeat": {
-        # مصري: قلبي هيقف، مرعوب، مخضوض
-        "triggers": ["قلبه", "خوف", "توتر", "رعب", "نبض", "خفقان", "ادرينالين", "مرعوب", "هيموت", "خضة", "مخضوض"],
-        "search": "heartbeat sound effect horror",
-        "positive": ["thump", "fast", "tension", "cinematic", "loud"],
-        "vol": -4, "cooldown": 40
+        "triggers": ["قلبه", "خوف"], "search": "heartbeat sound effect horror",
+        "positive": ["thump", "fast"], "vol": -4, "cooldown": 40
     },
     "body_fall": {
-        # مصري: اتكعبل، اترمى، دِب، وقع من طوله
-        "triggers": ["سقط", "وقع", "أغمي", "أرضا", "رماه", "هوى", "تعثر", "اتكعبل", "اترمى", "طب ساكت", "دب", "هبد"],
-        "search": "body fall impact sound effect",
-        "positive": ["thud", "ground", "hit", "collapse", "bone"],
-        "vol": -2, "cooldown": 30
+        "triggers": ["سقط", "وقع"], "search": "body fall impact sound effect",
+        "positive": ["thud", "ground"], "vol": -2, "cooldown": 30
     },
     "clothes": {
-        # مصري: هدوم، جاكيت، بيظبط
-        "triggers": ["ملابس", "جيب", "ارتدى", "نفض", "كم", "سترة", "هدوم", "جاكيت", "بنطلون", "بيعدل"],
-        "search": "clothes rustle sound effect",
-        "positive": ["fabric", "movement", "jacket", "pants"],
-        "vol": -12, "cooldown": 15
+        "triggers": ["ملابس", "جيب"], "search": "clothes rustle sound effect",
+        "positive": ["fabric", "movement"], "vol": -12, "cooldown": 15
     },
-
-    # -----------------------------------
-    # ⚔️ القتال والأكشن (Action)
-    # -----------------------------------
     "punch": {
-        # مصري: إداله، علقة، خناقة، بوكس، لطش
-        "triggers": ["لكم", "ضرب", "صفع", "هجم", "اشتبك", "بوكس", "خناقة", "علقة", "لطش", "إداله", "شلوت"],
-        "search": "punch impact sound effect",
-        "positive": ["hit", "face", "fight", "heavy", "combat"],
-        "vol": -2, "cooldown": 10
+        "triggers": ["لكم", "ضرب"], "search": "punch impact sound effect",
+        "positive": ["hit", "face"], "vol": -2, "cooldown": 10
     },
     "sword_draw": {
-        # مصري: سحب السكينة، مطوة
-        "triggers": ["سيف", "نصل", "استل", "خنجر", "سكين", "معدن", "مطوة", "سحب", "سن", "بيسن"],
-        "search": "sword draw sound effect",
-        "positive": ["metal", "sharp", "sheath", "knife", "blade"],
-        "vol": -5, "cooldown": 20
+        "triggers": ["سيف", "نصل"], "search": "sword draw sound effect",
+        "positive": ["metal", "sharp"], "vol": -5, "cooldown": 20
     },
     "gunshot": {
-        # مصري: طبنجة، ضرب نار، آلي
-        "triggers": ["رصاص", "سلاح", "مسدس", "أطلق", "نار", "بندقية", "زناد", "طبنجة", "خرطوش", "آلي", "ضرب"],
-        "search": "gunshot sound effect",
-        "positive": ["loud", "pistol", "blast", "fire", "9mm"],
-        "vol": -2, "cooldown": 20
+        "triggers": ["رصاص", "سلاح"], "search": "gunshot sound effect",
+        "positive": ["loud", "pistol"], "vol": -2, "cooldown": 20
     },
     "reload": {
-        # مصري: بيعمر، خزنة
-        "triggers": ["ذخيرة", "عمر", "لقم", "مخزن", "رصاصات", "خزنة", "بيعمر", "تعمير"],
-        "search": "gun reload sound effect",
-        "positive": ["click", "magazine", "clip", "weapon"],
-        "vol": -5, "cooldown": 30
+        "triggers": ["ذخيرة", "عمر"], "search": "gun reload sound effect",
+        "positive": ["click", "magazine"], "vol": -5, "cooldown": 30
     },
-
-    # -----------------------------------
-    # 🏚️ البيئة والمواد (Environment)
-    # -----------------------------------
     "wood_break": {
-        # مصري: دغدغ، كسر، اتخلع
-        "triggers": ["انكسار", "تكسر", "هشم", "تحطم", "خلع", "دغدغ", "اتكسر", "فرتك"],
-        "search": "wood snap break sound effect",
-        "positive": ["crack", "plank", "smash", "tree", "destruction"],
-        "vol": -4, "cooldown": 40
+        "triggers": ["انكسار", "تكسر"], "search": "wood snap break sound effect",
+        "positive": ["crack", "plank"], "vol": -4, "cooldown": 40
     },
     "wood_creak": {
-        # مصري: تزييق، باركيه
-        "triggers": ["خشب", "أرضية", "صرير", "ألواح", "قديم", "تزييق", "بيزيق", "باركيه"],
-        "search": "wood floor creak sound effect",
-        "positive": ["step", "house", "spooky", "slow"],
-        "vol": -8, "cooldown": 15
+        "triggers": ["خشب", "أرضية"], "search": "wood floor creak sound effect",
+        "positive": ["step", "house"], "vol": -8, "cooldown": 15
     },
     "rocks": {
-        # مصري: طوب، ردم، حصى
-        "triggers": ["صخور", "حجارة", "انهيار", "ردم", "طريق", "صخرة", "ارتطام", "زلزال", "طوب", "دبش", "حصى"],
-        "search": "rock debris falling sound effect",
-        "positive": ["rumble", "cave", "collapse", "heavy", "earth"],
-        "vol": -4, "cooldown": 50
+        "triggers": ["صخور", "حجارة"], "search": "rock debris falling sound effect",
+        "positive": ["rumble", "cave"], "vol": -4, "cooldown": 50
     },
     "glass": {
-        # مصري: دشدش، فتافيت، إزاز
-        "triggers": ["زجاج", "نافذة", "شظايا", "تهشم", "كأس", "مرآة", "إزاز", "دشيش", "دشدش", "فتافيت"],
-        "search": "glass shatter sound effect",
-        "positive": ["break", "window", "smash", "crash", "sharp"],
-        "vol": -4, "cooldown": 60
+        "triggers": ["زجاج", "تهشم"], "search": "glass shatter sound effect",
+        "positive": ["break", "window"], "vol": -4, "cooldown": 60
     },
     "metal_bang": {
-        # مصري: صاج، خبط في حديد
-        "triggers": ["حديد", "معدن", "طرق", "صفيح", "بوابة حديد", "صاج", "رزع حديد", "جرس"],
-        "search": "metal impact sound effect",
-        "positive": ["clang", "hit", "heavy", "pipe", "door"],
-        "vol": -3, "cooldown": 30
+        "triggers": ["حديد", "معدن"], "search": "metal impact sound effect",
+        "positive": ["clang", "hit"], "vol": -3, "cooldown": 30
     },
-
-    # -----------------------------------
-    # 🚪 الأبواب والمداخل
-    # -----------------------------------
-    "door_open": {
-        # مصري: وارب، زق الباب
-        "triggers": ["باب", "فتح", "وارب", "أوكرة", "زق"],
-        "search": "door open squeak sound effect",
-        "positive": ["handle", "creak", "room", "slow", "old"],
-        "vol": -5, "cooldown": 30
-    },
-    "door_slam": {
-        # مصري: رزع، هبد، تربس
-        "triggers": ["أغلق", "قفل", "أوصد", "سد", "حبس", "صفق", "رزع", "هبد", "تربس"],
-        "search": "door slam sound effect",
-        "positive": ["shut", "bang", "close", "angry", "heavy"],
-        "vol": -3, "cooldown": 30
-    },
-    "lock": {
-        # مصري: ترباس، طق
-        "triggers": ["مفتاح", "قفل", "مزلاج", "ترباس", "تكة", "طق"],
-        "search": "door lock sound effect",
-        "positive": ["click", "key", "turn", "unlock"],
-        "vol": -6, "cooldown": 20
-    },
-
-    # -----------------------------------
-    # ⛈️ الطقس (مختصر)
-    # -----------------------------------
     "thunder": {
-        "triggers": ["رعد", "برق", "سماء", "عاصفة", "غيوم", "بترعد", "بتبرق"],
-        "search": "thunder clap sound effect",
-        "positive": ["loud", "rumble", "storm", "strike"],
-        "vol": -1, "cooldown": 60
+        "triggers": ["رعد", "برق"], "search": "thunder clap sound effect",
+        "positive": ["loud", "rumble"], "vol": -1, "cooldown": 60
     },
     "rain": {
-        "triggers": ["مطر", "تمطر", "غيث", "بلل", "مياه", "سيول", "بتشتي", "غرقانة"],
-        "search": "rain heavy sound effect",
-        "positive": ["storm", "water", "falling", "roof"],
-        "vol": -10, "cooldown": 80
+        "triggers": ["مطر", "تمطر"], "search": "rain heavy sound effect",
+        "positive": ["storm", "water"], "vol": -10, "cooldown": 80
     },
-    
-    # -----------------------------------
-    # 🚗 متنوع
-    # -----------------------------------
     "car_engine": {
-        "triggers": ["سيارة", "محرك", "قيادة", "شغل", "انطلق", "عربية", "موتور", "دور"],
-        "search": "car engine start sound effect",
-        "positive": ["rev", "driving", "interior", "vehicle"],
-        "vol": -5, "cooldown": 60
+        "triggers": ["سيارة", "محرك"], "search": "car engine start sound effect",
+        "positive": ["rev", "driving"], "vol": -5, "cooldown": 60
     },
     "phone": {
-        "triggers": ["هاتف", "رن", "جوال", "اتصال", "رسالة", "موبايل", "بيرن"],
-        "search": "smartphone vibration sound effect",
-        "positive": ["ringtone", "buzz", "iphone", "call"],
-        "vol": -8, "cooldown": 50
+        "triggers": ["هاتف", "رن"], "search": "smartphone vibration sound effect",
+        "positive": ["ringtone", "buzz"], "vol": -8, "cooldown": 50
     },
     "paper": {
-        "triggers": ["ورق", "رسالة", "صفحة", "خريطة", "كتاب", "بيقلب", "جواب"],
-        "search": "paper rustling sound effect",
-        "positive": ["turning", "page", "handling", "book"],
-        "vol": -10, "cooldown": 20
+        "triggers": ["ورق", "كتاب"], "search": "paper rustling sound effect",
+        "positive": ["turning", "page"], "vol": -10, "cooldown": 20
+    },
+    "door_open": {
+        "triggers": ["باب", "فتح"], "search": "door open squeak sound effect",
+        "positive": ["handle", "creak"], "vol": -5, "cooldown": 30
+    },
+    "door_slam": {
+        "triggers": ["أغلق", "قفل"], "search": "door slam sound effect",
+        "positive": ["shut", "bang"], "vol": -3, "cooldown": 30
+    },
+    "lock": {
+        "triggers": ["مفتاح", "قفل"], "search": "door lock sound effect",
+        "positive": ["click", "key"], "vol": -6, "cooldown": 20
     }
 }
 
-# كلمات محظورة
 GLOBAL_NEGATIVE_TAGS = ["cartoon", "funny", "meme", "remix", "song", "music", "intro", "compilation", "lofi", "beat", "voice", "talking"]
 
 available_files_cache = {} 
@@ -221,30 +142,23 @@ last_triggered_time = {}
 global_last_event_time = -100
 
 # ==========================================
-# ⚖️ نظام التحكيم
+# ⚖️ الدوال المساعدة (كما هي للحفاظ على الميزات)
 # ==========================================
 def calculate_relevance_score(video_info, positive_tags):
     title = video_info.get('title', '').lower()
     duration = video_info.get('duration', 0)
     score = 0
-    
     for tag in positive_tags:
         if tag in title: score += 20
     for tag in GLOBAL_NEGATIVE_TAGS:
         if tag in title: score -= 100
-            
     if "original" in title or "hq" in title or "high quality" in title: score += 10
     if "isolated" in title or "foley" in title or "sfx" in title: score += 30
-        
     if 1 <= duration <= 15: score += 20
     elif duration > 60: score -= 50
     elif duration < 0.5: score -= 100
-
     return score
 
-# ==========================================
-# ✂️ القص الذكي
-# ==========================================
 def smart_crop_audio(sound, silence_thresh=-40, padding=100):
     try:
         nonsilent_ranges = detect_nonsilent(sound, min_silence_len=300, silence_thresh=silence_thresh)
@@ -256,9 +170,6 @@ def smart_crop_audio(sound, silence_thresh=-40, padding=100):
         return sound
     except: return sound
 
-# ==========================================
-# 🕵️‍♂️ التمويه
-# ==========================================
 def camouflage_audio(filepath):
     try:
         sound = AudioSegment.from_file(filepath)
@@ -270,15 +181,11 @@ def camouflage_audio(filepath):
         return True
     except: return False
 
-# ==========================================
-# 🗑️ فلتر الجودة
-# ==========================================
 def check_audio_quality(filepath):
     try:
         sound = AudioSegment.from_file(filepath)
         duration_sec = len(sound) / 1000.0
         if duration_sec > 120: 
-            print(f"         🗑️ مرفوض: طويل جداً ({duration_sec}s).")
             os.remove(filepath)
             return False
         if duration_sec < 0.2:
@@ -287,9 +194,6 @@ def check_audio_quality(filepath):
         return True
     except: return False
 
-# ==========================================
-# 🦅 البحث والتحميل (النسخة الصامدة)
-# ==========================================
 def get_best_variation(category, data_map):
     # 1. التدوير المحلي
     existing_files = []
@@ -309,9 +213,8 @@ def get_best_variation(category, data_map):
             print(f"      📦 استخدام ملف مخزن: {os.path.basename(file_to_use)}")
             return file_to_use
 
-    # 2. البحث الذكي
+    # 2. البحث الذكي (يوتيوب)
     print(f"      🦅 جاري البحث في يوتيوب عن '{category}'...")
-    
     search_base = data_map["search"]
     positive_tags = data_map["positive"]
     
@@ -328,7 +231,6 @@ def get_best_variation(category, data_map):
         with yt_dlp.YoutubeDL(ydl_opts_search) as ydl:
             search_query = f"{search_base} sound effect no copyright"
             result = ydl.extract_info(search_query, download=False)
-            
             if 'entries' in result:
                 for entry in result['entries']:
                     if not entry: continue
@@ -340,7 +242,6 @@ def get_best_variation(category, data_map):
     except Exception as e:
         print(f"      ⚠️ تعذر التقييم: {e}")
 
-    # 3. الخطة البديلة
     target_download = best_url
     if not target_download:
         print(f"      ⚠️ لم نجد فائزاً مثالياً، تفعيل التحميل الإجباري...")
@@ -348,7 +249,6 @@ def get_best_variation(category, data_map):
     else:
         print(f"      🏆 الفائز: {best_title} ({best_score})")
 
-    # 4. تحميل
     new_id = len(files) + 1
     filename = f"{category}_{new_id}.mp3"
     filepath = os.path.join(SFX_DIR, filename)
@@ -376,112 +276,111 @@ def get_best_variation(category, data_map):
     return None
 
 # ==========================================
-# 🌪️ محرك Whisper الجديد (الذكاء الخارق)
-# ==========================================
-# ==========================================
-# 🌪️ محرك Whisper الجديد (مع فلتر الذكاء اللغوي)
+# 🎬 المخرج الذكي (Hybrid: Gemini Brain + YT-DLP Muscle)
 # ==========================================
 def robust_director(voice_file):
-    # ==========================================
-    # 👇👇 أضف هذه السطور لتصفير الذاكرة 👇👇
-    global global_last_event_time, last_triggered_time
-    print("🔄 جاري تصفير العدادات لبدء ملف جديد...")
-    global_last_event_time = -100
-    last_triggered_time = {}
-    # ==========================================
-    
-    print("🧠 جاري تحميل نموذج Whisper (المرة الأولى قد تأخذ دقيقة)...")
-    # ... (باقي الكود يبقى كما هو دون تغيير)
+    print("🧠 جاري تحميل Whisper لاستخراج النص والتوقيت...")
     model = WhisperModel("base", device="cpu", compute_type="int8")
-
-    print(f"🎧 المخرج (Whisper): جاري تحليل '{voice_file}' بدقة عالية...")
     
-    full_audio = AudioSegment.from_file(voice_file)
-    full_audio = normalize(high_pass_filter(full_audio, 100))
-    
+    # 1. تحويل الصوت لنص مع توقيت دقيق
     segments, info = model.transcribe(voice_file, beam_size=5, word_timestamps=True, language="ar")
-
-    timeline = []
     
-    print("   ...جاري مسح الكلمات واستخراج المؤثرات (الفلتر الذكي V2)...")
+    full_transcript = []
+    print("📝 جاري بناء النص الزمني...")
     
     for segment in segments:
         for word in segment.words:
-            word_text = word.word.strip()
-            # إزالة التشكيل (الفتحة والضمة...)
-            word_text = "".join([c for c in word_text if c not in ["َ", "ً", "ُ", "ٌ", "ِ", "ٍ", "ْ", "ّ"]])
-            
-            start_time_sec = word.start
-            
-            # 🛑 المسافة الآمنة (4 ثواني)
-            if start_time_sec - global_last_event_time < 4:
-                continue
-
-            for category, data in SCENE_MAP.items():
-                
-                # --- 🧠 الفلتر الذكي المعدل (يقبل الزوائد في النهاية) ---
-                is_match = False
-                
-                # تنظيف الكلمة المنطوقة من البادئات (ال، و، ف، ب، ل)
-                clean_spoken = word_text
-                for prefix in ["ال", "و", "ف", "ب", "ل", "لل"]:
-                    if clean_spoken.startswith(prefix):
-                        clean_spoken = clean_spoken[len(prefix):]
-                
-                for trigger in data["triggers"]:
-                    # 1. إذا كان المحفز طويلاً (4 أحرف أو أكثر) -> نقبل وجوده في أي مكان
-                    if len(trigger) >= 4 and trigger in word_text:
-                        is_match = True
-                        break
-                    
-                    # 2. إذا كان قصيراً -> يجب أن تبدأ الكلمة به
-                    # مثال: "بابها" تبدأ بـ "باب" (مقبول)
-                    # مثال: "أسماء" لا تبدأ بـ "سماء" (مرفوض)
-                    elif clean_spoken.startswith(trigger):
-                        # شرط إضافي: ألا تكون الكلمة أطول بكثير من المحفز (لتجنب "كما" -> "كم")
-                        if len(clean_spoken) <= len(trigger) + 3:
-                            is_match = True
-                            break
-                # -----------------------------------------------------
-
-                if is_match:
-                    last_time = last_triggered_time.get(category, -100)
-                    if start_time_sec - last_time < data["cooldown"]:
-                        continue
-
-                    print(f"   💡 {start_time_sec:.2f}s: الكلمة '{word_text}' -> سياق '{category}'")
-                    
-                    sfx_file = get_best_variation(category, data)
-                    
-                    if sfx_file:
-                        timeline.append({
-                            "file": sfx_file, 
-                            "start": int(start_time_sec * 1000), 
-                            "vol": data["vol"]
-                        })
-                        last_triggered_time[category] = start_time_sec
-                        global_last_event_time = start_time_sec
-                        break 
-
-    print(f"\n🎬 جاري دمج {len(timeline)} مؤثر في أماكنها الدقيقة...")
-    final_mix = full_audio
+            # نخزن الكلمة وتوقيتها بدقة [ثانية] كلمة
+            full_transcript.append(f"[{word.start:.2f}] {word.word}")
     
-    for event in timeline:
-        try:
-            sfx = AudioSegment.from_file(event["file"])
-            sfx = smart_crop_audio(sfx)
-            sfx = sfx + event["vol"]
-            sfx = sfx.fade_out(400)
-            final_mix = final_mix.overlay(sfx, position=event["start"])
-        except Exception as e:
-            print(f"   ❌ خطأ دمج: {e}")
+    transcript_text = " ".join(full_transcript)
+    
+    # 2. استشارة Gemini (المخرج)
+    print("🤖 جاري إرسال السيناريو إلى Gemini للتحليل...")
+    
+    # نجهز قائمة المؤثرات التي لدينا تعريف لها في القاموس
+    available_sfx_list = list(SCENE_MAP.keys())
+    
+    prompt = f"""
+    أنت مخرج صوتي سينمائي محترف وخبير في اللهجة المصرية.
+    لديك نص لقصة مع التوقيت الزمني لكل كلمة بالتنسيق [ثانية] كلمة.
+    
+    المطلوب:
+    استخرج المؤثرات الصوتية المناسبة للسياق بدقة.
+    القاعدة الذهبية: تجاهل الجمل المنفية تماماً (مثال: "لم يفتح الباب" -> لا تضع صوت باب).
+    افهم المجاز: "قلبي وقع في رجلي" -> تعني خوف (heartbeat).
+    
+    النص:
+    {transcript_text}
+    
+    قائمة المؤثرات المسموح لك استخدامها فقط:
+    {available_sfx_list}
+    
+    أخرج النتيجة بصيغة JSON فقط مصفوفة تحتوي على:
+    "sfx": اسم المؤثر من القائمة أعلاه.
+    "time": وقت بداية المؤثر بالثواني (رقم).
+    
+    مثال للرد الصحيح:
+    [
+      {{"sfx": "footsteps", "time": 12.5}},
+      {{"sfx": "door_open", "time": 15.2}}
+    ]
+    """
+    
+    sfx_plan = []
+    try:
+        model_gemini = genai.GenerativeModel('gemini-1.5-flash')
+        response = model_gemini.generate_content(prompt)
+        
+        # تنظيف الرد للحصول على JSON فقط
+        response_text = response.text.replace("```json", "").replace("```", "").strip()
+        sfx_plan = json.loads(response_text)
+        
+        print("✅ الخطة الإخراجية من Gemini جاهزة:")
+        print(sfx_plan)
+        
+    except Exception as e:
+        print(f"❌ تعذر استخدام Gemini ({e})، سنستمر بدون مؤثرات جديدة لهذه المرة.")
+        # هنا يمكن وضع كود احتياطي (Fallback) إذا أردت
 
-    output_file = "Final_Robust_Story.mp3"
-    final_mix.export(output_file, format="mp3")
+    # 3. التنفيذ (باستخدام عضلات الكود القديم للتحميل والدمج)
+    full_audio = AudioSegment.from_file(voice_file)
+    full_audio = normalize(high_pass_filter(full_audio, 100))
+    
+    print(f"\n🎬 جاري دمج {len(sfx_plan)} مؤثر...")
+
+    for item in sfx_plan:
+        try:
+            category = item["sfx"]
+            start_time_sec = float(item["time"])
+            
+            # نتأكد أن المؤثر موجود في قاموسنا لنجلب بيانات البحث
+            if category in SCENE_MAP:
+                data_map = SCENE_MAP[category]
+                
+                # 👇 هنا نستخدم دالة التحميل القديمة القوية!
+                sfx_file = get_best_variation(category, data_map)
+                
+                if sfx_file:
+                    sfx_sound = AudioSegment.from_file(sfx_file)
+                    sfx_sound = smart_crop_audio(sfx_sound) # قص الصمت
+                    
+                    # ضبط الصوت والمكان
+                    sfx_sound = sfx_sound + data_map["vol"]
+                    sfx_sound = sfx_sound.fade_out(400)
+                    
+                    full_audio = full_audio.overlay(sfx_sound, position=int(start_time_sec * 1000))
+                    print(f"   ➕ تم دمج {category} في {start_time_sec}s")
+            
+        except Exception as e:
+            print(f"   ⚠️ تجاوز مؤثر بسبب خطأ: {e}")
+
+    output_file = "Final_AI_Story.mp3"
+    full_audio.export(output_file, format="mp3")
     print(f"\n🎉 تم الإنتاج! {output_file}")
     
     return output_file
 
 if __name__ == "__main__":
     # للاختبار المباشر
-    robust_director("téléchargé (3).wav")
+    robust_director("test.wav")
