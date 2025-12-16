@@ -4,16 +4,6 @@ import shutil
 import json
 import random
 import re
-import subprocess
-import sys
-
-# التأكد من تثبيت مكتبة groq
-try:
-    import groq
-except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "groq"])
-    import groq
-
 from groq import Groq
 from pydub import AudioSegment
 from pydub.effects import normalize, high_pass_filter
@@ -29,7 +19,7 @@ st.set_page_config(page_title="المخرج السينمائي (Llama 3 AI)", pa
 st.markdown("""
 <div style="text-align: center;">
     <h1>🦙 المخرج السينمائي الذكي (Llama 3)</h1>
-    <p>يفهم سياق الرواية باللهجة المصرية ويختار المؤثرات بدقة</p>
+    <p>تحليل ذكي للسياق باللهجة المصرية باستخدام Groq</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -45,7 +35,7 @@ AudioSegment.converter = "ffmpeg" if shutil.which("ffmpeg") else "ffmpeg.exe"
 api_key = st.secrets.get("GROQ_API_KEY")
 
 # ==========================================
-# 📚 قاموس المؤثرات (للمرجع فقط)
+# 📚 قاموس المؤثرات
 # ==========================================
 SCENE_MAP = {
     "footsteps": ["running footsteps horror", "slow heavy footsteps", "scared walking sounds"],
@@ -66,7 +56,7 @@ SCENE_MAP = {
 # ==========================================
 def analyze_text_with_groq(text_data):
     if not api_key:
-        st.error("⚠️ يجب إضافة GROQ_API_KEY في الـ Secrets!")
+        st.error("⚠️ لم يتم العثور على مفتاح GROQ_API_KEY في الـ Secrets!")
         return []
 
     client = Groq(api_key=api_key)
@@ -75,7 +65,7 @@ def analyze_text_with_groq(text_data):
     You are an expert movie sound director. Analyze this story script (Egyptian Arabic):
     "{text_data}"
 
-    Task: Identify the perfect moments for sound effects based on the **context** and **meaning**, not just keywords.
+    Task: Identify the perfect moments for sound effects based on the **context** and **meaning**.
     
     Available Effects: {list(SCENE_MAP.keys())}
     
@@ -89,27 +79,20 @@ def analyze_text_with_groq(text_data):
 
     try:
         completion = client.chat.completions.create(
-            model="llama3-70b-8192", # موديل ذكي جداً وسريع
+            model="llama3-70b-8192",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.1, # لضمان الدقة وعدم التأليف
+            temperature=0.1,
             response_format={"type": "json_object"}
         )
         
         response_text = completion.choices[0].message.content
-        return json.loads(response_text).get("sfx", []) # أو التعامل مع هيكل JSON المباشر
-        
-        # تحسين استخراج JSON في حال اختلاف الهيكل
-        if "sfx" in json.loads(response_text):
-            return json.loads(response_text)["sfx"]
-        elif isinstance(json.loads(response_text), list):
-            return json.loads(response_text)
-        else:
-            # محاولة البحث داخل القيم
-            data = json.loads(response_text)
-            for key in data:
-                if isinstance(data[key], list):
-                    return data[key]
-            return []
+        # محاولة قراءة JSON بمرونة
+        parsed = json.loads(response_text)
+        if "sfx" in parsed: return parsed["sfx"]
+        if isinstance(parsed, list): return parsed
+        for key in parsed:
+            if isinstance(parsed[key], list): return parsed[key]
+        return []
 
     except Exception as e:
         st.error(f"Groq AI Error: {e}")
@@ -119,20 +102,16 @@ def analyze_text_with_groq(text_data):
 # 📥 التحميل المتنوع
 # ==========================================
 def get_sfx_file(category):
-    # اختيار بحث عشوائي للتنويع
     search_query = random.choice(SCENE_MAP.get(category, [category + " sound"]))
-    
     filename_base = f"{category}_{random.randint(100,999)}"
     filename_path = os.path.join(SFX_DIR, filename_base)
     
-    # محاولة استخدام ملف موجود
     existing = [f for f in os.listdir(SFX_DIR) if f.startswith(category)]
     if existing and random.random() > 0.5:
         selected = os.path.join(SFX_DIR, random.choice(existing))
         if os.path.getsize(selected) > 5000: return selected
 
-    # تحميل جديد
-    st.toast(f"🦅 Llama طلب: {search_query}...")
+    st.toast(f"🦅 جاري تحميل: {search_query}...")
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': filename_path,
@@ -165,8 +144,7 @@ def smart_crop_audio(sound, silence_thresh=-40, padding=50):
     except: return sound
 
 def process_audio(voice_file):
-    # 1. Whisper
-    st.info("🧠 1. جاري استماع وتحليل القصة...")
+    st.info("🧠 1. جاري استماع وتحليل القصة (Whisper Medium)...")
     try:
         model = WhisperModel("medium", device="cpu", compute_type="int8")
         segments, _ = model.transcribe(voice_file, word_timestamps=True, language="ar")
@@ -185,7 +163,6 @@ def process_audio(voice_file):
         st.error(f"Whisper Error: {e}")
         return None
 
-    # 2. Groq AI (Llama 3)
     st.info("🦙 2. Llama 3 يدرس سياق الرواية...")
     sfx_plan = analyze_text_with_groq(prompt_text)
     
@@ -196,7 +173,6 @@ def process_audio(voice_file):
         st.warning("⚠️ لم يقترح الذكاء الاصطناعي أي مؤثرات.")
         return None
 
-    # 3. Montage
     st.info("🎬 3. جاري المونتاج...")
     full_audio = AudioSegment.from_file(voice_file)
     full_audio = normalize(high_pass_filter(full_audio, 80))
@@ -205,14 +181,11 @@ def process_audio(voice_file):
     for i, item in enumerate(sfx_plan):
         sfx_name = item.get("sfx")
         time_sec = float(item.get("time"))
-        
         sfx_path = get_sfx_file(sfx_name)
-        
         if sfx_path and os.path.exists(sfx_path):
             try:
                 sound = AudioSegment.from_file(sfx_path)
                 sound = smart_crop_audio(sound)
-                # Vol adjustment
                 sound = sound - 5 
                 sound = sound.fade_in(50).fade_out(300)
                 full_audio = full_audio.overlay(sound, position=int(time_sec * 1000))
