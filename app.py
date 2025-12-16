@@ -191,8 +191,8 @@ def process_audio(voice_file):
     
     sfx_plan = []
     try:
-        model_gemini = genai.GenerativeModel('gemini-1.5-flash')
-        response = model_gemini.generate_content(prompt)
+model_gemini = genai.GenerativeModel('gemini-pro')      
+response = model_gemini.generate_content(prompt)
         sfx_plan = json.loads(response.text.replace("```json", "").replace("```", "").strip())
         st.success(f"✅ تم اعتماد {len(sfx_plan)} مؤثر!")
         st.write(sfx_plan)
@@ -255,3 +255,4 @@ if uploaded_file:
             st.audio(final)
             with open(final, "rb") as f:
                 st.download_button("تحميل", f, file_name="Cinema.mp3")
+
